@@ -5,3 +5,5 @@ dist
 .truecanvas
 .DS_Store
 *.tgz
+.vercel
+.env*
