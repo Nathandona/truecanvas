@@ -1,7 +1,9 @@
 name: Release
 
 # Push a tag like v0.2.0 (matching packages/*/package.json versions) to publish
-# truecanvas and create-truecanvas to npm with provenance.
+# truecanvas and create-truecanvas to npm. Publishing uses npm trusted
+# publishing (OIDC): no token, and provenance is attached automatically.
+# Versions already on npm are skipped, so re-running a release is safe.
 on:
   push:
     tags: ["v*"]
@@ -21,6 +23,7 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # trusted publishing needs npm 11.5+
       - run: pnpm install --frozen-lockfile
       - name: Versions match the tag
         run: |
@@ -31,14 +34,17 @@ jobs:
           done
       - run: pnpm build
       - run: pnpm test
-      - run: npm publish --provenance --access public
-        working-directory: packages/truecanvas
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish --provenance --access public
-        working-directory: packages/create-truecanvas
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm
+        run: |
+          for p in packages/truecanvas packages/create-truecanvas; do
+            name=$(node -p "require('./$p/package.json').name")
+            version=$(node -p "require('./$p/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on npm, skipping"
+            else
+              (cd "$p" && npm publish --access public)
+            fi
+          done
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
