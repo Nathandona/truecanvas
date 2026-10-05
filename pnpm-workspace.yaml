@@ -1,0 +1,11 @@
+packages:
+  - packages/*
+  - examples/*
+  - site
+allowBuilds:
+  esbuild: true
+  sharp: true
+  "@tailwindcss/oxide": true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - lucide-react@1.52.0

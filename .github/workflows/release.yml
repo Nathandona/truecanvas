@@ -1,0 +1,44 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching packages/*/package.json versions) to publish
+# truecanvas and create-truecanvas to npm with provenance.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Versions match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in packages/truecanvas packages/create-truecanvas; do
+            v=$(node -p "require('./$p/package.json').version")
+            [ "$v" = "$tag" ] || { echo "$p is $v, tag is $tag"; exit 1; }
+          done
+      - run: pnpm build
+      - run: pnpm test
+      - run: npm publish --provenance --access public
+        working-directory: packages/truecanvas
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --provenance --access public
+        working-directory: packages/create-truecanvas
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

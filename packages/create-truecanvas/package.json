@@ -1,0 +1,35 @@
+{
+  "name": "create-truecanvas",
+  "version": "0.1.0",
+  "description": "Create a Next.js app with Truecanvas set up: npm create truecanvas",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "create-truecanvas": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "truecanvas",
+    "nextjs",
+    "react",
+    "design",
+    "canvas",
+    "mcp",
+    "create"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nathandona/truecanvas.git",
+    "directory": "packages/create-truecanvas"
+  },
+  "homepage": "https://github.com/Nathandona/truecanvas#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

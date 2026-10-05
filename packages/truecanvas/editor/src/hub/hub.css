@@ -1,0 +1,16 @@
+
+/* clone & pull requests */
+.repo-row {
+  gap: 9px;
+}
+.repo-row .pr-open {
+  color: #16a34a;
+}
+.hub-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+  font-size: 12px;
+}

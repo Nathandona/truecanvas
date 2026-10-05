@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* Truecanvas brand: warm paper, ink, coral */
+@theme inline {
+  --color-paper: #faf8f5;
+  --color-paper-2: #f3efe9;
+  --color-ink: #1c1917;
+  --color-ink-2: #44403c;
+  --color-muted: #78716c;
+  --color-line: #e7e1d8;
+  --color-coral: #f2774a;
+  --color-coral-ink: #c2410c;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(242 119 74 / 0.25);
+}
+
+/* isometric scene (components/iso-stack.tsx) */
+@keyframes iso-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+@keyframes iso-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes iso-bob {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes iso-halo {
+  50% {
+    opacity: 0.22;
+  }
+}
+.iso-rise {
+  animation: iso-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.iso-bob {
+  animation: iso-bob 4.5s ease-in-out infinite;
+}
+.iso-halo {
+  animation: iso-halo 4.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .iso-rise,
+  .iso-bob,
+  .iso-halo,
+  [style*="iso-dash"] {
+    animation: none !important;
+  }
+}
+
+/* canvas details around the hero screenshot */
+@keyframes tc-float {
+  50% {
+    transform: translate(6px, -8px);
+  }
+}
+.tc-float {
+  animation: tc-float 6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-float {
+    animation: none;
+  }
+}
+
+/* motion tokens (Emil Kowalski's curves) */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* press feedback: anything you can click scales down a touch */
+.press {
+  transition-property: transform, background-color, color, box-shadow;
+  transition-duration: 160ms;
+  transition-timing-function: var(--ease-out);
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+/* the How it works timeline draws itself as you scroll (scroll-driven, no JS) */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .tc-draw {
+      transform-origin: top;
+      animation: tc-draw linear both;
+      animation-timeline: view();
+      animation-range: entry 40% cover 55%;
+    }
+  }
+}
+@keyframes tc-draw {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+/* the hero headline's selection: appears once the words have landed */
+@keyframes tc-select {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+.tc-select {
+  animation: tc-select 400ms var(--ease-out) 1s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-select {
+    animation: tc-select-fade 200ms ease 0.4s both;
+  }
+}
+@keyframes tc-select-fade {
+  from {
+    opacity: 0;
+  }
+}

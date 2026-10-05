@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "truecanvas": {
+      "type": "http",
+      "url": "http://localhost:4800/mcp"
+    }
+  }
+}

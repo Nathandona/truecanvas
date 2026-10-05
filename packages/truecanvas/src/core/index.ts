@@ -1,0 +1,17 @@
+// Programmatic API: the same engine the editor and the MCP server use.
+export { parseCanvas, findNode, findFrame, allNodes } from "./parse.js";
+export { CanvasEditor, EditError, attrCode, textCode } from "./edit.js";
+export { injectIds } from "./inject.js";
+export { Workspace, componentJsx } from "./workspace.js";
+export type { Command, Actor, HistoryEntry, WorkspaceEvent } from "./workspace.js";
+export { loadConfig } from "./config.js";
+export type { TruecanvasConfig, DarkMode } from "./config.js";
+export { Catalog } from "./catalog.js";
+export { outlineDoc, describeComponent } from "./outline.js";
+export { readDesignTokens } from "./tokens.js";
+export type * from "./types.js";
+export { DEVICES, findDevice } from "./devices.js";
+export type { Device } from "./devices.js";
+export { frameChanges, writeCompare } from "./compare.js";
+export { Comments } from "./comments.js";
+export { Git } from "./git.js";

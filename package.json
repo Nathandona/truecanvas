@@ -1,0 +1,13 @@
+{
+  "name": "truecanvas-monorepo",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "build": "pnpm --filter truecanvas build",
+    "dev:pkg": "pnpm --filter truecanvas dev",
+    "test": "pnpm --filter truecanvas test",
+    "dev": "pnpm build && pnpm --filter playground dev",
+    "pack:local": "pnpm build && node scripts/pack-local.mjs",
+    "release": "node scripts/release.mjs"
+  }
+}

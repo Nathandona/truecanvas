@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --surface: #ffffff;
+  --sidebar: #fafafa;
+  --muted: #f4f4f5;
+  --muted-strong: #ebebed;
+  --border: #e7e7ea;
+  --border-strong: #d4d4d8;
+  --text: #18181b;
+  --text-muted: #71717a;
+  --text-subtle: #a1a1aa;
+  --accent: #2563eb;
+  --accent-soft: #eff4ff;
+  --accent-fg: #ffffff;
+  --success: #16a34a;
+  --success-soft: #ecfdf3;
+  --warning: #d97706;
+  --warning-soft: #fffaeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+  --ring: rgb(37 99 235 / 0.35);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0b0b0c;
+  --surface: #121214;
+  --sidebar: #0f0f11;
+  --muted: #1b1b1e;
+  --muted-strong: #242428;
+  --border: #26262a;
+  --border-strong: #34343a;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-subtle: #71717a;
+  --accent: #5b8cff;
+  --accent-soft: rgb(91 140 255 / 0.12);
+  --accent-fg: #0b0b0c;
+  --success: #3ccf6e;
+  --success-soft: rgb(60 207 110 / 0.12);
+  --warning: #f2a93b;
+  --warning-soft: rgb(242 169 59 / 0.12);
+  --danger: #f2555a;
+  --danger-soft: rgb(242 85 90 / 0.12);
+  --primary: #f4f4f5;
+  --primary-fg: #0b0b0c;
+  --ring: rgb(91 140 255 / 0.4);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-sidebar: var(--sidebar);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01";
+}
