@@ -20,6 +20,7 @@ export const metadata: Metadata = {
   description,
   alternates: { canonical: "/" },
   openGraph: { type: "website", url: "/", siteName: "Truecanvas", title: "Truecanvas · Design with your real components", description },
+  twitter: { card: "summary_large_image", title: "Truecanvas · Design with your real components", description },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

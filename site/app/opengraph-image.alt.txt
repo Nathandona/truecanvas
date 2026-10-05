@@ -1,0 +1,1 @@
+Truecanvas: design with your real components. A Figma-like canvas for your React app, edited by your agent over MCP.
