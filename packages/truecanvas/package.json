@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "truecanvas": "./dist/cli.js"
+    "truecanvas": "dist/cli.js"
   },
   "exports": {
     ".": {

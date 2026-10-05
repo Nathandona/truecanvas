@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "create-truecanvas": "./index.js"
+    "create-truecanvas": "index.js"
   },
   "files": [
     "index.js",
