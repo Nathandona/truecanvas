@@ -1,7 +1,21 @@
 import { CommandPill } from "@/components/command-pill";
 import { WindowFrame } from "@/components/window-frame";
-import { TextAnimate } from "@/components/motion/text-animate";
-import { Reveal } from "@/components/motion/reveal";
+import type { CSSProperties } from "react";
+
+const d = (ms: number) => ({ "--d": `${ms}ms` }) as CSSProperties;
+
+/* Words that rise in one after another. Plain CSS, so the entrance starts on
+   the first paint instead of waiting for JavaScript. */
+function Words({ text, from }: { text: string; from: number }) {
+  return text.split(" ").map((word, i) => (
+    <span key={i}>
+      {i > 0 && " "}
+      <span className="tc-word inline-block" style={d((from + i) * 45)}>
+        {word}
+      </span>
+    </span>
+  ));
+}
 
 export function Hero() {
   return (
@@ -15,7 +29,7 @@ export function Hero() {
         className="pointer-events-none absolute top-[52%] left-1/2 -z-10 h-[460px] w-[980px] -translate-x-1/2 rounded-full bg-coral/20 blur-[120px]"
       ></div>
       <div className="mx-auto flex max-w-4xl flex-col items-center text-center">
-        <Reveal duration={0.5}>
+        <div className="tc-in" style={d(0)}>
           <a
             href="https://github.com/Nathandona/truecanvas"
             className="group mb-10 inline-flex items-center gap-2 text-[14px] text-muted transition-colors duration-150 hover:text-ink"
@@ -26,12 +40,11 @@ export function Hero() {
             Free and open source, MIT licensed
             <span aria-hidden className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
           </a>
-        </Reveal>
+        </div>
         <h1 className="text-6xl font-semibold tracking-[-0.035em] text-balance sm:text-7xl">
-          <TextAnimate effect="words" stagger={0.06} delay={0.1} duration={0.7}>
-            Design with your{" "}
-            <span className="relative sm:whitespace-nowrap">
-              real components
+          <Words text="Design with your" from={0} />{" "}
+          <span className="relative sm:whitespace-nowrap">
+            <Words text="real components" from={3} />
               {/* the headline, selected on the canvas the way the editor draws it */}
               <span aria-hidden className="tc-select pointer-events-none absolute -inset-x-3 top-[0.1em] bottom-[0.06em] hidden border-[1.5px] border-[#0d99ff] sm:block">
                 <span className="absolute -top-[5px] -left-[5px] size-2 border-[1.5px] border-[#0d99ff] bg-white" />
@@ -40,15 +53,14 @@ export function Hero() {
                 <span className="absolute -right-[5px] -bottom-[5px] size-2 border-[1.5px] border-[#0d99ff] bg-white" />
                 <span className="absolute -top-7 -left-[1.5px] rounded-[3px] bg-[#0d99ff] px-1.5 py-0.5 font-mono text-[12px] leading-none font-medium tracking-normal text-white">h1</span>
               </span>
-            </span>
-          </TextAnimate>
+          </span>
         </h1>
-        <Reveal delay={0.4} stagger={0.08} className="flex flex-col items-center">
-        <p className="mt-6 max-w-2xl text-xl leading-relaxed text-muted text-pretty">
+        <div className="flex flex-col items-center">
+        <p style={d(200)} className="tc-in mt-6 max-w-2xl text-xl leading-relaxed text-muted text-pretty">
           A Figma-like canvas for your React app. Every layer is your code, your agent edits it
           through MCP, and every change ships as a pull request.
         </p>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+        <div style={d(260)} className="tc-in mt-10 flex flex-wrap items-center justify-center gap-3">
           <CommandPill command="npx truecanvas" />
           <a
             href="https://github.com/Nathandona/truecanvas"
@@ -57,9 +69,9 @@ export function Hero() {
             Star on GitHub
           </a>
         </div>
-        </Reveal>
+        </div>
       </div>
-      <Reveal delay={0.6} duration={0.9} className="relative mx-auto mt-16 max-w-6xl">
+      <div style={d(320)} className="tc-in tc-in-slow relative mx-auto mt-16 max-w-6xl">
         <div className="mb-2 flex items-center gap-2 text-[12.5px] text-muted">
           <span>Home</span>
           <span className="rounded-full bg-coral/15 px-2 py-0.5 text-[11.5px] font-medium text-coral-ink">
@@ -95,7 +107,7 @@ export function Hero() {
             Can we try the dark theme on the settings card?
           </span>
         </div>
-      </Reveal>
+      </div>
     </section>
   );
 }

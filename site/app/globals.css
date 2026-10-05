@@ -120,7 +120,7 @@ body {
   }
 }
 .tc-select {
-  animation: tc-select 400ms var(--ease-out) 1s both;
+  animation: tc-select 300ms var(--ease-out) 600ms both;
 }
 @media (prefers-reduced-motion: reduce) {
   .tc-select {
@@ -130,5 +130,36 @@ body {
 @keyframes tc-select-fade {
   from {
     opacity: 0;
+  }
+}
+
+/* hero entrance: CSS only, so it runs from the first paint */
+@keyframes tc-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+}
+@keyframes tc-word {
+  from {
+    opacity: 0;
+    transform: translateY(0.2em);
+    filter: blur(6px);
+  }
+}
+.tc-in {
+  animation: tc-in 500ms var(--ease-out) var(--d, 0ms) both;
+}
+.tc-in-slow {
+  animation-duration: 650ms;
+}
+.tc-word {
+  animation: tc-word 550ms var(--ease-out) var(--d, 0ms) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-in,
+  .tc-word {
+    animation: tc-select-fade 200ms ease both;
   }
 }
