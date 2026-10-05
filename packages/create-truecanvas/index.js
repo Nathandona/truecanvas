@@ -6,12 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 
+// plain text when piped, in CI logs or with NO_COLOR
+const color = process.stdout.isTTY && !process.env.NO_COLOR;
+const paint = (open, close) => (s) => (color ? `\x1b[${open}m${s}\x1b[${close}m` : s);
 const c = {
-  dim: (s) => `\x1b[2m${s}\x1b[22m`,
-  bold: (s) => `\x1b[1m${s}\x1b[22m`,
-  accent: (s) => `\x1b[38;5;209m${s}\x1b[39m`,
-  green: (s) => `\x1b[32m${s}\x1b[39m`,
-  red: (s) => `\x1b[31m${s}\x1b[39m`,
+  dim: paint("2", "22"),
+  bold: paint("1", "22"),
+  accent: paint("38;5;209", "39"),
+  green: paint("32", "39"),
+  red: paint("31", "39"),
 };
 
 const argv = process.argv.slice(2);
