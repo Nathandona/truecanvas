@@ -4,6 +4,8 @@
 
 **A Figma-like canvas for your real React components. The code is the document.**
 
+[truecanvas.dev](https://truecanvas.dev)
+
 Truecanvas renders your actual `.tsx` components on an infinite canvas, lets you compose them visually, and writes every change back to plain TSX in your repo. There is no built-in AI: it is **agent-first through MCP**, so Claude Code, Cursor, Codex or any MCP client can read your design system, edit frames and take screenshots, while you watch and steer in the editor.
 
 ![Truecanvas editor](docs/screenshot.png)

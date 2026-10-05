@@ -12,9 +12,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const description = "An open-source canvas for your React app: every layer is your code, your agent edits through MCP, and design changes ship as pull requests.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL("https://truecanvas.dev"),
   title: "Truecanvas · Design with your real components",
-  description: "An open-source canvas for your React app: every layer is your code, your agent edits through MCP, and design changes ship as pull requests.",
+  description,
+  alternates: { canonical: "/" },
+  openGraph: { type: "website", url: "/", siteName: "Truecanvas", title: "Truecanvas · Design with your real components", description },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

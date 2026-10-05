@@ -93,7 +93,7 @@
   "engines": {
     "node": ">=20"
   },
-  "homepage": "https://github.com/Nathandona/truecanvas#readme",
+  "homepage": "https://truecanvas.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Nathandona/truecanvas.git",

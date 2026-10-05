@@ -28,7 +28,7 @@
     "url": "git+https://github.com/Nathandona/truecanvas.git",
     "directory": "packages/create-truecanvas"
   },
-  "homepage": "https://github.com/Nathandona/truecanvas#readme",
+  "homepage": "https://truecanvas.dev",
   "publishConfig": {
     "access": "public"
   }
