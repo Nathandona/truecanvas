@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { EditError } from "./edit.js";
@@ -239,7 +240,19 @@ export class Git {
 
   /** git reports paths from the repo root; we show them from the project root. */
   private rel(root: string, file: string) {
-    return path.relative(this.cwd, path.join(root, file));
+    return path.relative(this.realCwd(), path.join(root, file));
+  }
+
+  /**
+   * The project folder as git sees it: git reports real paths, so a folder
+   * reached through a symlink (macOS /var → /private/var) must be resolved too.
+   */
+  private realCwd(): string {
+    try {
+      return fs.realpathSync(this.cwd);
+    } catch {
+      return this.cwd;
+    }
   }
 
   async branches(): Promise<{ current: string | null; local: string[]; remote: string[] }> {
@@ -276,7 +289,7 @@ export class Git {
   /** A file's content at a ref, or null if it doesn't exist there. */
   async show(ref: string, file: string): Promise<string | null> {
     const root = (await git(this.cwd, ["rev-parse", "--show-toplevel"])).trim();
-    const inRepo = path.relative(root, path.join(this.cwd, file)).split(path.sep).join("/");
+    const inRepo = path.relative(root, path.join(this.realCwd(), file)).split(path.sep).join("/");
     return git(this.cwd, ["show", `${safeRef(ref)}:${inRepo}`, "--"]).catch(() => null);
   }
 

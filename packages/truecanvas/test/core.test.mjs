@@ -789,12 +789,16 @@ test("git: status keeps unusual paths intact, reports renames and conflicts, rej
   }
   g("mv", "old.txt", "new name.txt");
   fs.writeFileSync(path.join(repo, "café.canvas.tsx"), "x");
-  const status = await new Git(repo).status();
+  // reached through a symlink, like macOS's /var → /private/var: git reports real paths
+  const link = `${repo}-link`;
+  fs.symlinkSync(repo, link);
+  const status = await new Git(link).status();
   const byPath = Object.fromEntries(status.files.map((f) => [f.path, f.status]));
   assert.equal(byPath["café.canvas.tsx"], "untracked");
   assert.equal(byPath["new name.txt"], "renamed");
   assert.equal(byPath["both.txt"], "conflicted");
   assert.equal(Object.keys(byPath).length, 3, JSON.stringify(byPath));
+  assert.equal(await new Git(link).show("HEAD", "both.txt"), "ours\n", "show() reads through the symlink too");
   await assert.rejects(new Git(repo).show("--output=/tmp/x", "both.txt"), /Invalid git ref/);
   await assert.rejects(new Git(repo).switch("-b"), /Invalid git ref/);
 });
