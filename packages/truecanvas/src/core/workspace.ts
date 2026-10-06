@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { posix } from "./paths.js";
 import { createRequire } from "node:module";
 import type { TruecanvasConfig } from "./config.js";
 import { Catalog, importSpecifier } from "./catalog.js";
@@ -153,7 +154,7 @@ export class Workspace {
   }
 
   relFile(canvas: string) {
-    return path.relative(this.config.root, this.file(canvas));
+    return posix(path.relative(this.config.root, this.file(canvas)));
   }
 
   read(canvas: string): string {

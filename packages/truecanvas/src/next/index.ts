@@ -33,8 +33,10 @@ export function withTruecanvas(config: NextConfig | NextConfigFn = {}): NextConf
 
 function withTruecanvasObject(config: NextConfig): NextConfig {
   if (productionCommand()) return config;
-  const loader = fileURLToPath(new URL("./loader.cjs", import.meta.url));
-  warnIfLinkedOutside(loader);
+  const loaderFile = fileURLToPath(new URL("./loader.cjs", import.meta.url));
+  warnIfLinkedOutside(loaderFile);
+  // Windows: Turbopack trips on absolute C:\ loader paths, the package export resolves the same file
+  const loader = process.platform === "win32" ? "truecanvas/loader" : loaderFile;
   const userWebpack = config.webpack;
   const root = process.cwd();
   const appDir = existsSync(join(root, "src/app")) ? "src/app" : "app";

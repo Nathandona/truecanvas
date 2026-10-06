@@ -399,7 +399,7 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
         <div className="dash-head">
           <div>
             <h1>Projects</h1>
-            <p className="muted">Each project is a Next.js app. Its canvases are .tsx files in the repo.</p>
+            <p className="muted">Each project is a Next.js or Vite app. Its canvases are .tsx files in the repo.</p>
           </div>
           <div className="dash-actions">
             <div className="field" style={{ width: 200 }}>
@@ -424,7 +424,7 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
           <div className="dash-empty">
             <FolderPlus size={28} />
             <div style={{ fontWeight: 600, marginTop: 10 }}>No projects yet</div>
-            <div className="muted">Open a Next.js app from your computer, clone one from GitHub, or create a new one.</div>
+            <div className="muted">Open a Next.js or Vite app from your computer, clone one from GitHub, or create a new one.</div>
           </div>
         )}
 
@@ -620,7 +620,7 @@ function OpenFolder({ onClose, onPick: pickDir }: { onClose: () => void; onPick:
   }, [dir]);
   return (
     <Modal title="Open a project folder" onClose={onClose} width={520}>
-      <p className="muted">Pick the root of a Next.js app (the folder with its package.json).</p>
+      <p className="muted">Pick the root of a Next.js or Vite app (the folder with its package.json).</p>
       <div className="field">
         <span className="prefix">
           <Folder size={13} />
@@ -629,7 +629,7 @@ function OpenFolder({ onClose, onPick: pickDir }: { onClose: () => void; onPick:
       </div>
       <div className="dir-list">
         {list && (
-          <button className="dir-row" onClick={() => setDir(list.path.split("/").slice(0, -1).join("/") || "/")}>
+          <button className="dir-row" onClick={() => setDir(`${list.path}/..`)}>
             <Folder size={14} className="faint" /> ..
           </button>
         )}
@@ -637,7 +637,7 @@ function OpenFolder({ onClose, onPick: pickDir }: { onClose: () => void; onPick:
           <button key={d.name} className="dir-row" onClick={() => setDir(`${list.path}/${d.name}`)} onDoubleClick={() => d.next && onPick(`${list.path}/${d.name}`)}>
             <Folder size={14} className={d.next ? "" : "faint"} />
             <span>{d.name}</span>
-            {d.next && <span className="chip accent">Next.js</span>}
+            {d.next && <span className="chip accent">App</span>}
           </button>
         ))}
         {err && <div className="faint" style={{ padding: 8 }}>{err}</div>}

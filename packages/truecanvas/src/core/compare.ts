@@ -2,23 +2,24 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TruecanvasConfig } from "./config.js";
 import { parseCanvas } from "./parse.js";
-import { assertCanvasName, syncRoute } from "./scaffold.js";
+import { assertCanvasName, routeDirOf, syncRoute } from "./scaffold.js";
 import { importSpecifier } from "./catalog.js";
 import { rewriteImportSource } from "./ast.js";
+import { posix } from "./paths.js";
 
 export const COMPARE_PREFIX = "__compare__";
 
 /**
- * Writes an older version of a canvas next to the generated route so Next can
+ * Writes an older version of a canvas next to the generated route so the app can
  * render it like any canvas ("__compare__<name>"). Relative imports are
  * rewritten for the new location; alias imports (@/…) work unchanged.
  */
 export function writeCompare(config: TruecanvasConfig, canvas: string, source: string, files: Record<string, string> = {}, as = canvas): string {
-  const routeDir = path.join(config.root, config.appDir, "truecanvas");
+  const routeDir = routeDirOf(config);
   const dir = path.join(routeDir, "compare");
   fs.mkdirSync(dir, { recursive: true });
   const canvasDir = path.join(config.root, config.canvasDir);
-  const canvasRel = path.join(config.canvasDir, `${canvas}.canvas.tsx`);
+  const canvasRel = `${config.canvasDir}/${canvas}.canvas.tsx`;
 
   // older versions of linked pages/layouts, next to the snapshot (not named page.tsx, so they're not routes)
   const swapped = new Map<string, string>();
@@ -37,7 +38,7 @@ export function writeCompare(config: TruecanvasConfig, canvas: string, source: s
 }
 
 function relativeSpec(fromDir: string, target: string) {
-  const next = path.relative(fromDir, target);
+  const next = posix(path.relative(fromDir, target));
   return next.startsWith(".") ? next : `./${next}`;
 }
 
@@ -56,7 +57,7 @@ function rewriteImports(source: string, map: (spec: string) => string): string {
 
 export function clearCompare(config: TruecanvasConfig, canvas?: string) {
   if (canvas) assertCanvasName(canvas);
-  const dir = path.join(config.root, config.appDir, "truecanvas", "compare");
+  const dir = path.join(routeDirOf(config), "compare");
   if (!fs.existsSync(dir)) return;
   for (const f of fs.readdirSync(dir)) if (!canvas || f === `${canvas}.canvas.tsx` || f.startsWith(`${canvas}--`)) fs.rmSync(path.join(dir, f));
   syncRoute(config);

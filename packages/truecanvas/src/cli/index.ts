@@ -7,7 +7,9 @@ import { loadConfig } from "../core/config.js";
 import { Workspace } from "../core/workspace.js";
 import { startServer } from "../server/http.js";
 import { runStdioBridge } from "../server/stdio.js";
-import { initProject, nextConfigStatus } from "../core/init.js";
+import { configStatus, initProject } from "../core/init.js";
+import type { Framework } from "../core/config.js";
+import { createRequire } from "node:module";
 import { startHub } from "../hub/server.js";
 import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.js";
 import { fileURLToPath } from "node:url";
@@ -19,14 +21,14 @@ import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, insta
 const HELP = `truecanvas: design with your real React components
 
 Usage
-  truecanvas           In a Next.js app: set it up (asks once) and start the editor.
+  truecanvas           In a Next.js or Vite app: set it up (asks once) and start the editor.
                        Elsewhere: open the Truecanvas window.
   truecanvas connect   Add Truecanvas to this project's .mcp.json (Claude Code, Cursor,
                        VS Code): commit it and every teammate's agent connects
   truecanvas doctor    Check this project and machine, with a fix for each problem
   truecanvas dev       Start the editor + MCP server for this project (no window)
   truecanvas setup     Install and set up Truecanvas in this project, without starting
-  truecanvas init      Only write the config (next.config, script, canvas folder)
+  truecanvas init      Only write the config (next/vite config, script, canvas folder)
   truecanvas open      Open the Truecanvas window (projects dashboard + tabs)
   truecanvas quit      Quit the window and every app it started
   truecanvas desktop   Add Truecanvas to your app launcher (Linux); "desktop remove" undoes it
@@ -35,8 +37,8 @@ Usage
 Options
   -y, --yes            Don't ask: set up and connect agents
   --port <n>           Editor/MCP port (default 4800)
-  --app <url>          Your Next.js dev URL (default http://localhost:3000)
-  --no-next            Don't start \`next dev\` (by default it starts when the app isn't running)
+  --app <url>          Your app's dev URL (default http://localhost:3000, Vite :5173)
+  --no-next            Don't start the app's dev server (by default it starts when the app isn't running)
   --no-open            Don't open the editor in your browser
   --cursor, --vscode   connect: also write .cursor/mcp.json / .vscode/mcp.json
   -v, --version        Print the version
@@ -85,7 +87,8 @@ async function main() {
   // ---------- the one command ----------
   if (command === "start") {
     const root = process.cwd();
-    if (!readPackage(root) || !("next" in { ...readPackage(root)!.dependencies, ...readPackage(root)!.devDependencies })) {
+    const deps = { ...readPackage(root)?.dependencies, ...readPackage(root)?.devDependencies };
+    if (!("next" in deps) && !("vite" in deps && "react" in deps)) {
       // not in an app: the projects window
       return openWindow(cli, values.port ? Number(values.port) : 4800);
     }
@@ -153,6 +156,7 @@ async function main() {
     return console.log(`${c.green("✓")} Truecanvas quit. Project apps it started are stopped too.`);
   }
   if (command === "desktop") {
+    if (process.platform !== "linux") return console.log(`The app launcher entry is Linux-only for now. Run ${c.accent("truecanvas open")} to open the window.`);
     if (positionals[1] === "remove") {
       const removed = uninstallDesktop();
       console.log(removed.length ? `${c.green("✓")} Removed the launcher.` : "Nothing to remove.");
@@ -167,7 +171,7 @@ async function main() {
 
   const root = process.cwd();
   if (!fs.existsSync(path.join(root, "package.json"))) {
-    console.error("Run truecanvas from your Next.js project root (no package.json here).");
+    console.error("Run truecanvas from your app's root (no package.json here).");
     process.exit(1);
   }
   const config = loadConfig(root, { port: values.port ? Number(values.port) : undefined, appUrl: values.app });
@@ -178,7 +182,7 @@ async function main() {
     ws.ensureRoute();
     console.log(`\n  ${c.accent("◆")} ${c.bold("Truecanvas")} is set up in ${c.bold(path.basename(root))}\n`);
     for (const line of report.done) console.log(`  ${c.green("✓")} ${line}`);
-    console.log(`  ${c.green("✓")} Canvas folder ${c.bold(config.canvasDir)} and dev route ${c.bold(`${config.appDir}/truecanvas`)}`);
+    console.log(`  ${c.green("✓")} Canvas folder ${c.bold(config.canvasDir)} and dev route ${c.bold(config.routeDir)}`);
     for (const line of report.todo) console.log(`  ${c.dim("!")} ${line}`);
     console.log(`\n  Next: ${c.accent("npm run canvas")} ${c.dim("(starts your app and the editor)")}\n`);
     return;
@@ -208,7 +212,7 @@ async function main() {
   if (command === "dev" && (await openInWindow(root, config.port))) return;
 
   // first run in a project: set it up automatically
-  const status = nextConfigStatus(root);
+  const status = configStatus(root, config.framework);
   if (!status.wrapped) {
     const report = initProject(config);
     for (const line of report.done) console.log(`  ${c.green("✓")} ${line}`);
@@ -232,14 +236,15 @@ async function main() {
   // One command: start the app too, unless it's already running.
   let next: ChildProcess | null = null;
   const appUp = await reachable(config.appUrl);
-  if (!appUp && values.next && !values["no-next"]) next = startNext(root, config.appUrl);
+  const devCommand = config.framework === "vite" ? "vite" : "next dev";
+  if (!appUp && values.next && !values["no-next"]) next = startApp(root, config.appUrl, config.framework);
 
   console.log(`
   ${c.accent("◆")} ${c.bold("Truecanvas")} ${c.dim(`v${version}`)}
 
   ${c.dim("Editor")}   ${c.bold(origin)}
   ${c.dim("MCP")}      ${mcp}
-  ${c.dim("App")}      ${config.appUrl} ${c.dim(appUp ? "(already running)" : next ? "(starting next dev…)" : "(not running)")}
+  ${c.dim("App")}      ${config.appUrl} ${c.dim(appUp ? "(already running)" : next ? `(starting ${devCommand}…)` : "(not running)")}
   ${c.dim("Canvases")} ${ws.canvases().join(", ") || "none"}
 
 ${hasAgentConfig(root, config.port) ? `  ${c.dim("Agents")}   connected through .mcp.json` : `  ${c.dim("Connect your agent:")} ${c.accent("npx truecanvas connect")} ${c.dim("(writes .mcp.json; commit it for your team)")}`}
@@ -249,8 +254,8 @@ ${hasAgentConfig(root, config.port) ? `  ${c.dim("Agents")}   connected through 
     const exited = new Promise<"exited">((r) => next!.once("exit", () => r("exited")));
     const result = await Promise.race([waitFor(config.appUrl, 90_000), exited]);
     if (result === true) console.log(`  ${c.green("✓")} App ready at ${config.appUrl}\n`);
-    else if (result === "exited") console.log(`  ${c.dim("next dev stopped (see above). Start your app, the editor connects as soon as it's up.")}\n`);
-    else console.log(`  ${c.dim("next dev is taking a while. The editor will connect when it's up.")}\n`);
+    else if (result === "exited") console.log(`  ${c.dim(`${devCommand} stopped (see above). Start your app, the editor connects as soon as it's up.`)}\n`);
+    else console.log(`  ${c.dim(`${devCommand} is taking a while. The editor will connect when it's up.`)}\n`);
   }
   if (values.open && !values["no-open"]) openBrowser(origin);
 
@@ -258,17 +263,17 @@ ${hasAgentConfig(root, config.port) ? `  ${c.dim("Agents")}   connected through 
   const stop = async () => {
     if (stopping) return;
     stopping = true;
-    // let next dev finish (it cleans up its own workers), but not forever
+    // let the dev server finish (it cleans up its own workers), but not forever
     const nextGone = next && next.exitCode === null ? new Promise((r) => next!.once("exit", r)) : Promise.resolve();
-    next?.kill("SIGINT");
+    if (next) stopTree(next, "SIGINT");
     await Promise.all([shutdown(), Promise.race([nextGone, new Promise((r) => setTimeout(r, 4000))])]);
-    if (next && next.exitCode === null) next.kill("SIGKILL");
+    if (next && next.exitCode === null) stopTree(next, "SIGKILL");
     process.exit(0);
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   next?.on("exit", (code) => {
-    if (!stopping) console.log(`  ${c.dim(`next dev exited (${code ?? "signal"}).`)}`);
+    if (!stopping) console.log(`  ${c.dim(`${devCommand} exited (${code ?? "signal"}).`)}`);
   });
 }
 
@@ -318,7 +323,7 @@ async function ask(question: string): Promise<boolean> {
  */
 async function ensureSetup(root: string, pkgDir: string, version: string, yes: boolean, force = false): Promise<boolean> {
   const tc = installedIn(root);
-  const wrapped = nextConfigStatus(root).wrapped;
+  const wrapped = configStatus(root).wrapped;
   if (tc.declared && tc.installed && wrapped && !force) return true;
   const name = readPackage(root)?.name ?? path.basename(root);
   if (!yes) {
@@ -327,7 +332,7 @@ async function ensureSetup(root: string, pkgDir: string, version: string, yes: b
       return false;
     }
     console.log(`\n  ${c.accent("◆")} ${c.bold("Truecanvas")} ${c.dim(`v${version}`)}\n`);
-    console.log(`  This adds Truecanvas to ${c.bold(name)}: a dev dependency, a wrapper in next.config,`);
+    console.log(`  This adds Truecanvas to ${c.bold(name)}: a dev dependency, a plugin in ${configStatus(root).framework === "vite" ? "vite.config" : "next.config"},`);
     console.log(`  a ${c.bold("canvas")} script and a canvas with your homepage. Nothing changes in production builds.\n`);
     if (!(await ask("Set it up?"))) return false;
   }
@@ -384,26 +389,51 @@ async function waitFor(url: string, ms: number) {
   return false;
 }
 
-/** Runs the project's own `next dev`, with its output prefixed so both logs stay readable. */
-function startNext(root: string, appUrl: string): ChildProcess {
-  const port = new URL(appUrl).port || "3000";
-  const bin = path.join(root, "node_modules", ".bin", "next");
+/**
+ * Runs the project's own dev server (`next dev` or `vite`), with its output
+ * prefixed so both logs stay readable. Started through node and the package's
+ * bin script: no shell, so it works the same on Windows and with spaces in paths.
+ */
+function startApp(root: string, appUrl: string, framework: Framework): ChildProcess {
+  const port = new URL(appUrl).port || (framework === "vite" ? "5173" : "3000");
   // 127.0.0.1: the dev app (and its /truecanvas routes) stays off the local network
-  const devArgs = ["dev", "-p", port, "-H", "127.0.0.1"];
-  const [cmd, args] = fs.existsSync(bin) ? [bin, devArgs] : ["npx", ["next", ...devArgs]];
-  const child = spawn(cmd, args, { cwd: root, env: toolEnv(process.env.NO_COLOR ? {} : { FORCE_COLOR: "1" }), stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32" });
-  child.on("error", (err) => console.error(`  ${c.dim("next │")} couldn't start next dev: ${err.message}`));
-  const prefix = c.dim("next │ ");
+  const devArgs = framework === "vite" ? ["--port", port, "--strictPort", "--host", "127.0.0.1"] : ["dev", "-p", port, "-H", "127.0.0.1"];
+  const pkg = framework === "vite" ? "vite" : "next";
+  const bin = binScript(root, pkg);
+  const [cmd, args] = bin ? [process.execPath, [bin, ...devArgs]] : [process.platform === "win32" ? "npx.cmd" : "npx", [pkg, ...devArgs]];
+  const label = framework === "vite" ? "vite" : "next";
+  const child = spawn(cmd, args, { cwd: root, env: toolEnv(process.env.NO_COLOR ? {} : { FORCE_COLOR: "1" }), stdio: ["ignore", "pipe", "pipe"], shell: !bin && process.platform === "win32" });
+  child.on("error", (err) => console.error(`  ${c.dim(`${label} │`)} couldn't start ${pkg}: ${err.message}`));
+  const prefix = c.dim(`${label} │ `);
   for (const stream of [child.stdout!, child.stderr!]) {
     let buf = "";
     stream.on("data", (chunk: Buffer) => {
       buf += chunk.toString();
-      const lines = buf.split("\n");
+      const lines = buf.split(/\r?\n/);
       buf = lines.pop()!;
       for (const line of lines) if (line.trim()) process.stdout.write(`  ${prefix}${line}\n`);
     });
   }
   return child;
+}
+
+/** The JS file behind a package's bin (e.g. next/dist/bin/next), resolved from the project. */
+function binScript(root: string, pkg: string): string | null {
+  try {
+    const req = createRequire(path.join(root, "package.json"));
+    const manifest = req.resolve(`${pkg}/package.json`);
+    const { bin } = JSON.parse(fs.readFileSync(manifest, "utf8")) as { bin?: string | Record<string, string> };
+    const rel = typeof bin === "string" ? bin : bin?.[pkg];
+    return rel ? path.join(path.dirname(manifest), rel) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stops a dev server and its workers. Windows has no signals for child trees: taskkill does it. */
+function stopTree(child: ChildProcess, signal: NodeJS.Signals) {
+  if (process.platform === "win32" && child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" }).on("error", () => {});
+  else child.kill(signal);
 }
 
 function openBrowser(url: string) {

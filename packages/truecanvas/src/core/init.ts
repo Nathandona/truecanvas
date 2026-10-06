@@ -1,36 +1,63 @@
 import fs from "node:fs";
 import MagicString from "magic-string";
-import { parseModule } from "./ast.js";
+import { parseModule, walk } from "./ast.js";
 import path from "node:path";
-import type { TruecanvasConfig } from "./config.js";
+import { detectFramework, type Framework, type TruecanvasConfig } from "./config.js";
 
 export interface InitReport {
   done: string[];
   todo: string[];
 }
 
-const CONFIG_FILES = ["next.config.ts", "next.config.mjs", "next.config.js", "next.config.mts"];
+const CONFIG_FILES: Record<Framework, string[]> = {
+  next: ["next.config.ts", "next.config.mjs", "next.config.js", "next.config.mts"],
+  vite: ["vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs"],
+};
 
-/** Is next.config already wrapped with withTruecanvas? */
-export function nextConfigStatus(root: string): { file: string | null; wrapped: boolean } {
-  for (const name of CONFIG_FILES) {
-    const file = path.join(root, name);
-    if (fs.existsSync(file)) return { file, wrapped: fs.readFileSync(file, "utf8").includes("withTruecanvas") };
+/** The app's framework from its package.json (Next.js unless only Vite is there). */
+export function projectFramework(root: string): Framework {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    return detectFramework({ ...pkg.dependencies, ...pkg.devDependencies });
+  } catch {
+    return "next";
   }
-  return { file: null, wrapped: false };
+}
+
+/** Does the app's next.config / vite.config already enable Truecanvas? */
+export function configStatus(root: string, framework = projectFramework(root)): { file: string | null; wrapped: boolean; framework: Framework } {
+  const marker = framework === "vite" ? "truecanvas/vite" : "withTruecanvas";
+  for (const name of CONFIG_FILES[framework]) {
+    const file = path.join(root, name);
+    if (fs.existsSync(file)) return { file, wrapped: fs.readFileSync(file, "utf8").includes(marker), framework };
+  }
+  return { file: null, wrapped: false, framework };
 }
 
 /**
- * Sets up a Next.js project: wraps next.config, adds a `canvas` script and
- * ignores the generated route. Every step is idempotent and reported.
+ * Sets up a Next.js or Vite project: enables the plugin in its config, adds a
+ * `canvas` script and ignores the generated route. Every step is idempotent
+ * and reported.
  */
 export function initProject(config: TruecanvasConfig): InitReport {
   const { root } = config;
   const report: InitReport = { done: [], todo: [] };
+  const vite = config.framework === "vite";
 
-  // 1. next.config
-  const status = nextConfigStatus(root);
-  if (!status.file) {
+  // 1. next.config / vite.config
+  const status = configStatus(root, config.framework);
+  if (vite) {
+    const name = status.file ? path.basename(status.file) : "vite.config.ts";
+    if (status.wrapped) report.done.push(`${name} already uses the truecanvas() plugin`);
+    else {
+      const src = status.file ? fs.readFileSync(status.file, "utf8") : null;
+      const next = src && addVitePlugin(src);
+      if (next) {
+        fs.writeFileSync(status.file!, next);
+        report.done.push(`Added the truecanvas() plugin to ${name}`);
+      } else report.todo.push(`Add truecanvas() from "truecanvas/vite" to the plugins in ${name}`);
+    }
+  } else if (!status.file) {
     const file = path.join(root, "next.config.ts");
     fs.writeFileSync(file, `import type { NextConfig } from "next";\nimport { withTruecanvas } from "truecanvas/next";\n\nconst nextConfig: NextConfig = {};\n\nexport default withTruecanvas(nextConfig);\n`);
     report.done.push("Created next.config.ts with withTruecanvas()");
@@ -61,14 +88,14 @@ export function initProject(config: TruecanvasConfig): InitReport {
     }
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
     if (!("tailwindcss" in deps)) report.todo.push("Tailwind CSS isn't installed: layout and style controls write Tailwind classes");
-    if (!("next" in deps)) report.todo.push("Next.js isn't in package.json: Truecanvas currently needs a Next.js (App Router) app");
+    if (!("next" in deps) && !("vite" in deps)) report.todo.push("Neither Next.js nor Vite is in package.json: Truecanvas needs a Next.js (App Router) or Vite + React app");
   } catch {
     report.todo.push("Couldn't read package.json");
   }
 
   // 3. .gitignore for the generated route
   const ignoreFile = path.join(root, ".gitignore");
-  const entry = `/${config.appDir}/truecanvas/`;
+  const entry = `/${config.routeDir}/`;
   const ignore = fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, "utf8") : "";
   if (!ignore.split("\n").some((l) => l.trim() === entry || l.trim() === entry.slice(1))) {
     fs.writeFileSync(ignoreFile, `${ignore}${ignore && !ignore.endsWith("\n") ? "\n" : ""}\n# Truecanvas (generated dev-only route)\n${entry}\n`);
@@ -94,7 +121,7 @@ export function initProject(config: TruecanvasConfig): InitReport {
   }
 
   // 5. app router check
-  if (!fs.existsSync(path.join(root, config.appDir))) report.todo.push(`No ${config.appDir}/ folder found: Truecanvas needs the Next.js App Router`);
+  if (!vite && !fs.existsSync(path.join(root, config.appDir))) report.todo.push(`No ${config.appDir}/ folder found: Truecanvas needs the Next.js App Router`);
   return report;
 }
 
@@ -147,4 +174,37 @@ export function wrapConfigExport(src: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Adds `truecanvas()` to a vite.config's plugins array, touching nothing
+ * else. Null when there's no plugins array to add it to.
+ */
+export function addVitePlugin(src: string): string | null {
+  let ast;
+  try {
+    ast = parseModule(src);
+  } catch {
+    return null;
+  }
+  let plugins: { start: number; end: number; elements: { start: number; end: number }[] } | null = null;
+  walk(ast, (node) => {
+    if (plugins) return false;
+    if (node.type !== "ObjectProperty" || node.value.type !== "ArrayExpression") return;
+    const key = node.key.type === "Identifier" ? node.key.name : node.key.type === "StringLiteral" ? node.key.value : null;
+    if (key !== "plugins") return;
+    plugins = { start: node.value.start!, end: node.value.end!, elements: node.value.elements.filter((e) => e !== null).map((e) => ({ start: e.start!, end: e.end! })) };
+    return false;
+  });
+  if (!plugins) return null;
+  const { start, end, elements } = plugins as { start: number; end: number; elements: { start: number; end: number }[] };
+  const s = new MagicString(src);
+  if (!elements.length) s.overwrite(start, end, "[truecanvas()]");
+  else {
+    const last = elements[elements.length - 1];
+    const before = src.slice(start + 1, elements[0].start);
+    // one plugin per line stays one per line
+    s.appendLeft(last.end, before.includes("\n") ? `,${before.replace(/^[^\n]*/, "")}truecanvas()` : ", truecanvas()");
+  }
+  return addImport(s.toString(), `import { truecanvas } from "truecanvas/vite";`);
 }

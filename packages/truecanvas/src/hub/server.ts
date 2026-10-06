@@ -23,7 +23,7 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
 };
 
-const HUB_INSTRUCTIONS = `Truecanvas hub: several projects, each a Next.js app with canvases of real React components.
+const HUB_INSTRUCTIONS = `Truecanvas hub: several projects, each a Next.js or Vite + React app with canvases of real React components.
 Your tools act on the current project (the active tab in the Truecanvas window, unless you pick one with open_project).
 Use list_projects to see them. All other tools are the regular Truecanvas canvas tools for that project.`;
 
@@ -218,8 +218,8 @@ export async function startHub(opts: { port: number; cli: string }) {
         req.on("close", () => clients.delete(res));
         return;
       case "POST /api/hub/add": {
-        const dir = path.resolve(body.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-        if (!fs.existsSync(path.join(dir, "package.json"))) return json(res, 400, { error: "No package.json in that folder. Pick the root of a Next.js app." });
+        const dir = path.resolve(body.path.replace(/^~(?=$|[\\/])/, os.homedir()));
+        if (!fs.existsSync(path.join(dir, "package.json"))) return json(res, 400, { error: "No package.json in that folder. Pick the root of a Next.js or Vite app." });
         store.touch(dir);
         broadcast();
         // set up already: the window opens its tab right away

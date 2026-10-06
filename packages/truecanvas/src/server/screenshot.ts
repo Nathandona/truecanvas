@@ -6,17 +6,34 @@ import type { Browser } from "playwright-core";
 /** A Chromium for screenshots: TRUECANVAS_CHROME, Playwright's headless shell, or a system Chrome/Chromium. */
 export function findChromium(): string | undefined {
   if (process.env.TRUECANVAS_CHROME) return process.env.TRUECANVAS_CHROME;
-  const cache = path.join(os.homedir(), ".cache", "ms-playwright");
+  // Playwright's browsers, where `npx playwright install` puts them on this OS
+  const cache =
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||
+    (process.platform === "win32"
+      ? path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "ms-playwright")
+      : process.platform === "darwin"
+        ? path.join(os.homedir(), "Library", "Caches", "ms-playwright")
+        : path.join(os.homedir(), ".cache", "ms-playwright"));
   if (fs.existsSync(cache)) {
     const shells = fs.readdirSync(cache).filter((d) => d.startsWith("chromium_headless_shell-")).sort().reverse();
     for (const d of shells) {
-      for (const sub of ["chrome-headless-shell-linux64/chrome-headless-shell", "chrome-linux/headless_shell", "chrome-headless-shell-mac-arm64/chrome-headless-shell", "chrome-headless-shell-mac-x64/chrome-headless-shell"]) {
+      for (const sub of [
+        "chrome-headless-shell-linux64/chrome-headless-shell",
+        "chrome-linux/headless_shell",
+        "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+        "chrome-headless-shell-mac-x64/chrome-headless-shell",
+        "chrome-headless-shell-win64/chrome-headless-shell.exe",
+        "chrome-win/headless_shell.exe",
+      ]) {
         const p = path.join(cache, d, sub);
         if (fs.existsSync(p)) return p;
       }
     }
   }
+  const programFiles = [process.env.PROGRAMFILES, process.env["PROGRAMFILES(X86)"], process.env.LOCALAPPDATA].filter(Boolean) as string[];
   for (const p of [
+    ...programFiles.flatMap((dir) => [path.join(dir, "Google", "Chrome", "Application", "chrome.exe"), path.join(dir, "Microsoft", "Edge", "Application", "msedge.exe")]),
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
     "/usr/bin/google-chrome-stable",

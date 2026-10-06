@@ -11,7 +11,7 @@ import path from "node:path";
  */
 
 export { detectPm, type Pm } from "../core/pm.js";
-import { addArgs, toolEnv, type Pm } from "../core/pm.js";
+import { addArgs, shellSafe, toolEnv, type Pm } from "../core/pm.js";
 
 export function addDevArgs(pm: Pm, spec: string): string[] {
   return addArgs(pm, [spec], true);
@@ -27,7 +27,8 @@ export type Exec = (cmd: string, args: string[], cwd: string) => Promise<void>;
 /** Runs a command with its output passed through (CLI) . */
 export const execInherit: Exec = (cmd, args, cwd) =>
   new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, stdio: "inherit", env: toolEnv() });
+    const safe = shellSafe(cmd, args);
+    const p = spawn(safe.cmd, safe.args, { cwd, stdio: "inherit", env: toolEnv(), shell: safe.shell });
     p.on("error", reject);
     p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} ${args.join(" ")} exited with ${code}`))));
   });

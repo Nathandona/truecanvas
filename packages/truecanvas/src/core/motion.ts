@@ -240,8 +240,8 @@ export interface MotionFiles {
 export function motionFiles(config: TruecanvasConfig): MotionFiles {
   const glob = config.components[0] ?? "components/**/*.tsx";
   const base = glob.split("/").filter((p) => !p.includes("*")).join("/") || "components";
-  const dir = path.join(base, "motion");
-  return { reveal: path.join(dir, "reveal.tsx"), text: path.join(dir, "text-animate.tsx") };
+  const dir = `${base}/motion`;
+  return { reveal: `${dir}/reveal.tsx`, text: `${dir}/text-animate.tsx` };
 }
 
 /** Writes the motion components if they aren't in the project yet. Returns the files and whether any was created. */

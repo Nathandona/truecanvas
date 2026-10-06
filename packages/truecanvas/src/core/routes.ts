@@ -4,6 +4,7 @@ import { defaultReturn } from "./source.js";
 import { importSpecifier } from "./catalog.js";
 import type { TruecanvasConfig } from "./config.js";
 import { rewriteImportSource } from "./ast.js";
+import { posix } from "./paths.js";
 
 export interface AppRoute {
   /** URL path, e.g. "/" or "/pricing" */
@@ -19,6 +20,8 @@ const LAYOUT = ["layout.tsx", "layout.jsx", "layout.js", "layout.ts"];
 
 /** Every App Router page, except Truecanvas' own route and API handlers. */
 export function listRoutes(config: TruecanvasConfig): AppRoute[] {
+  // Vite apps have no file-based routes to link: their components still are
+  if (config.framework !== "next") return [];
   const appDir = path.join(config.root, config.appDir);
   const out: AppRoute[] = [];
   const walkDir = (dir: string, segments: string[]) => {
@@ -31,7 +34,7 @@ export function listRoutes(config: TruecanvasConfig): AppRoute[] {
     for (const e of entries) {
       if (e.isFile() && PAGE.test(e.name)) {
         const visible = segments.filter((s) => !/^\(.*\)$/.test(s) && !s.startsWith("@"));
-        out.push({ route: `/${visible.join("/")}`, file: path.relative(config.root, path.join(dir, e.name)), dynamic: segments.some((s) => s.startsWith("[")) });
+        out.push({ route: `/${visible.join("/")}`, file: posix(path.relative(config.root, path.join(dir, e.name))), dynamic: segments.some((s) => s.startsWith("[")) });
       }
       if (e.isDirectory() && !e.name.startsWith("_") && e.name !== "truecanvas" && e.name !== "api" && e.name !== "node_modules") walkDir(path.join(dir, e.name), [...segments, e.name]);
     }
@@ -76,7 +79,7 @@ export function layoutFiles(config: TruecanvasConfig, pageFile: string): string[
   const out: string[] = [];
   for (let dir = path.dirname(path.resolve(config.root, pageFile)); dir.startsWith(appDir) && dir !== appDir; dir = path.dirname(dir)) {
     const file = LAYOUT.map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
-    if (file) out.push(path.relative(config.root, file));
+    if (file) out.push(posix(path.relative(config.root, file)));
   }
   return out;
 }

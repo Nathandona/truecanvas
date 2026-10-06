@@ -46,6 +46,17 @@ export function toolEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 /**
+ * A command as spawn() needs it on every OS. On Windows npm, pnpm and npx are
+ * .cmd scripts that only start through a shell, and the shell splits on
+ * spaces, so arguments with spaces or metacharacters are quoted.
+ */
+export function shellSafe(cmd: string, args: string[]): { cmd: string; args: string[]; shell: boolean } {
+  if (process.platform !== "win32") return { cmd, args, shell: false };
+  const quote = (a: string) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+  return { cmd: quote(cmd), args: args.map(quote), shell: true };
+}
+
+/**
  * Runs a command to completion and returns its combined output. Never waits on
  * a prompt: stdin is closed, CI=1 makes CLIs pick defaults, and it times out.
  */
@@ -59,7 +70,8 @@ export function run(cmd: string, args: string[], cwd: string, timeoutMs = 300_00
       clearTimeout(timer);
       resolve({ ok, out: (out + extra).slice(-20_000) });
     };
-    const p = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: toolEnv({ CI: "1", FORCE_COLOR: "0", NO_COLOR: "1" }), shell: process.platform === "win32" });
+    const safe = shellSafe(cmd, args);
+    const p = spawn(safe.cmd, safe.args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: toolEnv({ CI: "1", FORCE_COLOR: "0", NO_COLOR: "1" }), shell: safe.shell });
     const timer = setTimeout(() => {
       p.kill();
       finish(false, `\n${cmd} timed out after ${Math.round(timeoutMs / 1000)}s`);

@@ -115,6 +115,7 @@ export async function startServer(ws: Workspace) {
       case "GET /api/state":
         return json(res, 200, {
           appUrl: config.appUrl,
+          framework: config.framework,
           root: config.root,
           projectName: path.basename(config.root),
           canvases: ws.canvases(),
@@ -498,7 +499,7 @@ export async function startServer(ws: Workspace) {
   setInterval(watchCanvasDir, 2000).unref();
   // pages and layouts: linked frames follow edits made in a code editor (or by git)
   const appDirAbs = path.join(config.root, config.appDir);
-  if (fs.existsSync(appDirAbs)) {
+  if (config.framework === "next" && fs.existsSync(appDirAbs)) {
     const appPending = new Map<string, NodeJS.Timeout>();
     const appWatcher = fs.watch(appDirAbs, { recursive: true }, (_event, filename) => {
       if (!filename || !/(^|[\\/])(page|layout)\.[jt]sx$/.test(filename) || /^truecanvas[\\/]/.test(filename)) return;

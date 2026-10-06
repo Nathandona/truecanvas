@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { injectIds, parseCanvas, Workspace, loadConfig, outlineDoc, iconLibraries, loadIcons, searchIcons, shadcnStatus, Git, wrapConfigExport } from "../dist/core/index.js";
+import { injectIds, parseCanvas, Workspace, loadConfig, outlineDoc, iconLibraries, loadIcons, searchIcons, shadcnStatus, Git, wrapConfigExport, addVitePlugin, configStatus, initProject, syncRoute, viteStylesheets } from "../dist/core/index.js";
+import { truecanvas as vitePlugin } from "../dist/vite/index.js";
 import { execFileSync } from "node:child_process";
 
 const CANVAS = `"use client";
@@ -78,7 +79,7 @@ before(() => {
   fs.writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true, paths: { "@/*": ["./*"] } } }));
   fs.writeFileSync(path.join(root, "components/button.tsx"), BUTTON);
   // real React types, like a real project
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(root, "node_modules"));
+  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(root, "node_modules"), "junction");
   reset();
 });
 
@@ -352,9 +353,9 @@ export const glowPresets = [
     fs.unlinkSync(path.join(root, "node_modules"));
   } catch {}
   fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/react"), path.join(root, "node_modules/react"));
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/@types"), path.join(root, "node_modules/@types"));
-  fs.symlinkSync(path.join(local, "fake-shaders"), path.join(root, "node_modules/fake-shaders"));
+  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/react"), path.join(root, "node_modules/react"), "junction");
+  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/@types"), path.join(root, "node_modules/@types"), "junction");
+  fs.symlinkSync(path.join(local, "fake-shaders"), path.join(root, "node_modules/fake-shaders"), "junction");
   reset();
   await ws.catalog.load();
   const glow = ws.catalog.get("Glow");
@@ -696,7 +697,7 @@ test("icons: installed libraries render to SVG, insert with an import, alias on 
   fs.mkdirSync(path.join(proj, "canvas"));
   fs.mkdirSync(path.join(proj, "node_modules/lucide-react"), { recursive: true });
   fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ dependencies: { "lucide-react": "1.0.0" } }));
-  for (const dep of ["react", "react-dom"]) fs.symlinkSync(path.resolve(`../../examples/playground/node_modules/${dep}`), path.join(proj, "node_modules", dep));
+  for (const dep of ["react", "react-dom"]) fs.symlinkSync(path.resolve(`../../examples/playground/node_modules/${dep}`), path.join(proj, "node_modules", dep), "junction");
   // shaped like lucide: icons plus `XIcon` and `LucideX` aliases and a generic `Icon`
   fs.writeFileSync(path.join(proj, "node_modules/lucide-react/package.json"), JSON.stringify({ name: "lucide-react", version: "1.0.0", type: "module", main: "index.js" }));
   fs.writeFileSync(
@@ -791,7 +792,7 @@ test("git: status keeps unusual paths intact, reports renames and conflicts, rej
   fs.writeFileSync(path.join(repo, "café.canvas.tsx"), "x");
   // reached through a symlink, like macOS's /var → /private/var: git reports real paths
   const link = `${repo}-link`;
-  fs.symlinkSync(repo, link);
+  fs.symlinkSync(repo, link, "junction");
   const status = await new Git(link).status();
   const byPath = Object.fromEntries(status.files.map((f) => [f.path, f.status]));
   assert.equal(byPath["café.canvas.tsx"], "untracked");
@@ -818,13 +819,60 @@ test("init: wraps only the exported next.config expression", () => {
   assert.equal(wrapConfigExport(`const x = 1;\n`), null);
 });
 
+test("vite: adds truecanvas() to the plugins, keeping the config's style", () => {
+  const imp = `import { truecanvas } from "truecanvas/vite";`;
+  const multi = addVitePlugin(`import react from '@vitejs/plugin-react'\nimport { defineConfig } from 'vite'\n\nexport default defineConfig({\n  plugins: [\n    react(),\n  ],\n})\n`);
+  assert.ok(multi.includes(imp), multi);
+  assert.ok(multi.includes(`  plugins: [\n    react(),\n    truecanvas(),\n  ],`), multi);
+  const inline = addVitePlugin(`import { defineConfig } from "vite";\nexport default defineConfig(({ mode }) => ({ plugins: [react()], base: "/" }));\n`);
+  assert.ok(inline.includes(`plugins: [react(), truecanvas()]`), inline);
+  assert.ok(addVitePlugin(`export default { plugins: [] };\n`).includes(`plugins: [truecanvas()]`));
+  assert.equal(addVitePlugin(`export default {};\n`), null, "no plugins array: the user adds it by hand");
+});
+
+test("vite: detected, set up, and frames get the app's stylesheets", () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-vite-"));
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ name: "v", scripts: { dev: "vite" }, dependencies: { react: "19.0.0" }, devDependencies: { vite: "8.0.0" } }));
+  fs.writeFileSync(path.join(proj, "vite.config.ts"), `import { defineConfig } from "vite";\nexport default defineConfig({\n  plugins: [react()],\n});\n`);
+  fs.writeFileSync(path.join(proj, "index.html"), `<html><head><link rel="preconnect" href="https://fonts.gstatic.com"></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>`);
+  fs.mkdirSync(path.join(proj, "src", "components"), { recursive: true });
+  fs.writeFileSync(path.join(proj, "src/main.tsx"), `import { createRoot } from "react-dom/client";\nimport "./index.css";\nimport "@fontsource/inter";\nimport App from "./App";\n`);
+  const config = loadConfig(proj);
+  assert.deepEqual([config.framework, config.appDir, config.routeDir, config.canvasDir, config.appUrl], ["vite", "src", ".truecanvas", "src/canvas", "http://localhost:5173"]);
+  assert.deepEqual(viteStylesheets(proj), ["/src/index.css"], "the entry's own stylesheets (package CSS without an extension is skipped)");
+  assert.equal(configStatus(proj).wrapped, false);
+  const report = initProject(config);
+  assert.ok(report.done.some((l) => l.includes("truecanvas() plugin")), JSON.stringify(report));
+  assert.equal(configStatus(proj).wrapped, true);
+  assert.match(fs.readFileSync(path.join(proj, ".gitignore"), "utf8"), /^\/\.truecanvas\/$/m);
+  syncRoute(config);
+  const entry = fs.readFileSync(path.join(proj, ".truecanvas/entry.tsx"), "utf8");
+  assert.match(entry, /^import "\/src\/index\.css";$/m);
+  assert.match(entry, /getElementById\("tc-root"\)/);
+  assert.ok(!fs.existsSync(path.join(proj, ".truecanvas/[canvas]")), "no Next route in a Vite app");
+});
+
+test("vite plugin: stamps canvases and components, nothing else", () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-vplug-"));
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
+  fs.mkdirSync(path.join(proj, "src"));
+  const plugin = vitePlugin();
+  plugin.configResolved({ root: proj });
+  const jsx = `export const A = () => <div><span>hi</span></div>;\n`;
+  assert.match(plugin.transform(jsx, path.join(proj, "src/canvas/home.canvas.tsx")).code, /<div data-tc="1:23">/);
+  assert.match(plugin.transform(jsx, path.join(proj, "src/components/a.tsx") + "?v=1").code, /data-tc="src\/components\/a\.tsx#1:23"/);
+  assert.equal(plugin.transform(jsx, path.join(proj, "src/App.tsx")), null);
+  assert.equal(plugin.transform(jsx, path.join(proj, "node_modules/x/src/components/a.tsx")), null);
+  assert.equal(plugin.apply, "serve", "production builds are untouched");
+});
+
 /** An isolated project with one canvas; `id(pred)` finds a layer's current id. */
 function project(canvasBody, files = {}) {
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-fix-"));
   for (const dir of ["canvas", "components", "app"]) fs.mkdirSync(path.join(proj, dir));
   fs.writeFileSync(path.join(proj, "package.json"), "{}");
   fs.writeFileSync(path.join(proj, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true, paths: { "@/*": ["./*"] } } }));
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(proj, "node_modules"));
+  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(proj, "node_modules"), "junction");
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(proj, rel)), { recursive: true });
     fs.writeFileSync(path.join(proj, rel), content);

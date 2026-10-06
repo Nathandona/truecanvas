@@ -64,6 +64,7 @@ interface State {
   ready: boolean;
   connected: boolean;
   appUrl: string;
+  framework: "next" | "vite";
   projectName: string;
   /** where new components go, e.g. "src/components" */
   componentsDir: string;
@@ -178,6 +179,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   ready: false,
   connected: false,
   appUrl: "",
+  framework: "next",
   projectName: "",
   componentsDir: "components",
   componentDialog: null,

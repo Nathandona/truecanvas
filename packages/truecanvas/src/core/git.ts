@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { EditError } from "./edit.js";
+import { posix } from "./paths.js";
 
 /** Shown to the user as-is (400), like edit errors. */
 export class GitError extends EditError {}
@@ -240,7 +241,7 @@ export class Git {
 
   /** git reports paths from the repo root; we show them from the project root. */
   private rel(root: string, file: string) {
-    return path.relative(this.realCwd(), path.join(root, file));
+    return posix(path.relative(this.realCwd(), path.join(root, file)));
   }
 
   /**

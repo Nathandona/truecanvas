@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { globSync } from "tinyglobby";
+import { posix } from "./paths.js";
 
 const GROUPS: [prefix: string, title: string, usage: string][] = [
   ["--color-", "Colors", "bg-{name} text-{name} border-{name}"],
@@ -24,7 +25,7 @@ export function readDesignTokens(root: string): string {
   for (const file of files) {
     const css = fs.readFileSync(file, "utf8");
     if (!css.includes("@theme") && !css.includes("@custom-variant")) continue;
-    sources.push(path.relative(root, file));
+    sources.push(posix(path.relative(root, file)));
     const dv = /@custom-variant\s+dark\s*\(([^;]+)\);/.exec(css);
     if (dv) darkVariant = dv[1].trim();
     for (const block of css.matchAll(/@theme[^{]*\{([\s\S]*?)\n\}/g)) {

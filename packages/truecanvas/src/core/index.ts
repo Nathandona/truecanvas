@@ -19,4 +19,5 @@ export { ICON_LIBRARIES, iconLibraries, iconLibrary, loadIcons, searchIcons } fr
 export type { Icon, IconLibrary } from "./icons.js";
 export { shadcnStatus, shadcnRegistry, shadcnAdd, shadcnInit } from "./shadcn.js";
 export type { ShadcnStatus } from "./shadcn.js";
-export { initProject, wrapConfigExport } from "./init.js";
+export { addVitePlugin, configStatus, initProject, wrapConfigExport } from "./init.js";
+export { syncRoute, viteStylesheets } from "./scaffold.js";

@@ -84,7 +84,7 @@ export async function reviewPage(ws: Workspace, canvas: string, ref: string, sin
       }
     }
   }
-  const comments = path.join(ws.config.canvasDir, `${canvas}.comments.json`);
+  const comments = `${ws.config.canvasDir}/${canvas}.comments.json`;
   if ((await ws.git.show(ref, comments)) !== readNow(ws, comments)) files.push(comments);
   if (!files.length) return null;
 
@@ -118,7 +118,7 @@ export async function reviewAll(ws: Workspace): Promise<PageReview[]> {
   const out: PageReview[] = [];
   for (const canvas of names) {
     // cheap filter: skip pages none of whose files changed
-    const own = [ws.relFile(canvas), path.join(ws.config.canvasDir, `${canvas}.comments.json`)];
+    const own = [ws.relFile(canvas), `${ws.config.canvasDir}/${canvas}.comments.json`];
     const touchesLinked = [...linked].some((f) => changed.has(f));
     if (!own.some((f) => changed.has(f)) && !touchesLinked) continue;
     const page = await reviewPage(ws, canvas, ref, since).catch(() => null);

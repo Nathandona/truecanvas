@@ -31,6 +31,7 @@ export interface DarkMode {
 
 export interface ServerState {
   appUrl: string;
+  framework: "next" | "vite";
   root: string;
   projectName: string;
   canvases: string[];

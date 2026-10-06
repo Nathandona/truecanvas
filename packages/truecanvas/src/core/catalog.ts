@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { globSync } from "tinyglobby";
 import type TS from "typescript";
 import type { ComponentSpec, PropSpec } from "./types.js";
+import { posix } from "./paths.js";
 
 const require = createRequire(import.meta.url);
 
@@ -104,7 +105,7 @@ export async function analyzeComponents(root: string, globs: string[], libraries
       const ret = checker.typeToString(sig.getReturnType());
       // async server components cannot render inside a client canvas
       if (!/Element|ReactNode|ReactPortal|null|any/.test(ret) || /^Promise</.test(ret)) continue;
-      out.push(describe(ts, checker, sym, decl, sig, library ?? path.relative(root, file), library));
+      out.push(describe(ts, checker, sym, decl, sig, library ?? posix(path.relative(root, file)), library));
     }
   }
   for (const spec of out) applyProfile(spec);
@@ -313,13 +314,13 @@ export function importSpecifier(root: string, canvasFile: string, componentFile:
   // library components are imported by package name
   if (!/\.(tsx|ts|jsx|js)$/.test(componentFile) && !componentFile.startsWith(".")) return componentFile;
   const abs = path.resolve(root, componentFile);
-  const noExt = abs.replace(/\.(tsx|ts|jsx|js)$/, "").replace(/\/index$/, "");
+  const noExt = posix(abs).replace(/\.(tsx|ts|jsx|js)$/, "").replace(/\/index$/, "");
   const alias = readAlias(root);
   if (alias) {
     const rel = path.relative(alias.dir, noExt);
-    if (!rel.startsWith("..")) return `${alias.prefix}${rel}`;
+    if (!rel.startsWith("..")) return `${alias.prefix}${posix(rel)}`;
   }
-  let rel = path.relative(path.dirname(path.resolve(root, canvasFile)), noExt);
+  let rel = posix(path.relative(path.dirname(path.resolve(root, canvasFile)), noExt));
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
 }

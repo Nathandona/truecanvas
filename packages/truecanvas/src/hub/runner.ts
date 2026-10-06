@@ -4,7 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { packageSpec } from "../cli/setup.js";
-import { detectPm, addArgs, toolEnv, type Pm } from "../core/pm.js";
+import { detectPm, addArgs, shellSafe, toolEnv, type Pm } from "../core/pm.js";
 
 export interface Running {
   path: string;
@@ -169,10 +169,12 @@ export class Runner {
   }
 }
 
-/** Signals a project's whole process group (truecanvas dev, next dev and its workers). */
+/** Signals a project's whole process group (truecanvas dev, the app's dev server and its workers). */
 function killTree(proc: ChildProcess, signal: NodeJS.Signals) {
   try {
-    if (process.platform !== "win32" && proc.pid) process.kill(-proc.pid, signal);
+    // Windows has no process groups or SIGTERM handlers: taskkill ends the whole tree
+    if (process.platform === "win32" && proc.pid) spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" }).on("error", () => proc.kill());
+    else if (proc.pid) process.kill(-proc.pid, signal);
     else proc.kill(signal);
   } catch {
     proc.kill(signal);
@@ -216,9 +218,10 @@ async function install(job: Job, cmd: string, args: string[], cwd: string) {
 function run(job: Job, cmd: string, args: string[], cwd: string): Promise<void> {
   job.log.push(`$ ${cmd} ${args.join(" ")}`);
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, env: toolEnv({ CI: "1", FORCE_COLOR: "0" }), stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32" });
+    const safe = shellSafe(cmd, args);
+    const p = spawn(safe.cmd, safe.args, { cwd, env: toolEnv({ CI: "1", FORCE_COLOR: "0" }), stdio: ["ignore", "pipe", "pipe"], shell: safe.shell });
     const capture = (c: Buffer) => {
-      for (const line of c.toString().split("\n")) if (line.trim()) job.log.push(line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ""));
+      for (const line of c.toString().split(/\r?\n/)) if (line.trim()) job.log.push(line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ""));
       if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
     };
     p.stdout!.on("data", capture);
@@ -271,7 +274,7 @@ export function createJob(name: string, parent: string, pkgDir: string, cli: str
     .toLowerCase()
     .replace(/[^a-z0-9-_]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  const parentDir = path.resolve(parent.replace(/^~(?=$|\/)/, os.homedir()));
+  const parentDir = path.resolve(parent.replace(/^~(?=$|[\\/])/, os.homedir()));
   const dir = path.join(parentDir, safe);
   return startJob(`Create ${safe}`, async (job) => {
     if (!safe) throw new Error("Pick a project name.");
@@ -289,7 +292,9 @@ export function createJob(name: string, parent: string, pkgDir: string, cli: str
 /** Output of a command (gh, git) or null when it fails. */
 export function capture(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { cwd, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
+    // pnpm is a .cmd on Windows: through a shell there (git and gh are .exe and work either way)
+    const safe = shellSafe(cmd, args);
+    execFile(safe.cmd, safe.args, { shell: safe.shell, cwd, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
       resolve({ ok: !err, out: err ? (stderr || err.message).trim() : stdout }),
     );
   });
@@ -300,7 +305,7 @@ export function capture(cmd: string, args: string[], cwd: string): Promise<{ ok:
  * dependencies, and set Truecanvas up if the project doesn't have it yet.
  */
 export function cloneJob(repo: string, parent: string, pkgDir: string, cli: string): Job {
-  const parentDir = path.resolve(parent.replace(/^~(?=$|\/)/, os.homedir()));
+  const parentDir = path.resolve(parent.replace(/^~(?=$|[\\/])/, os.homedir()));
   const name = repo.replace(/\.git$/, "").split(/[/:]/).pop() ?? "";
   const dir = path.join(parentDir, name);
   return startJob(`Clone ${name}`, async (job) => {
@@ -310,7 +315,7 @@ export function cloneJob(repo: string, parent: string, pkgDir: string, cli: stri
     const url = /^(https?:|git@|ssh:|file:)/.test(repo);
     if (url) await run(job, "git", ["clone", repo, dir], parentDir);
     else await run(job, "gh", ["repo", "clone", repo, dir], parentDir);
-    if (!fs.existsSync(path.join(dir, "package.json"))) throw new Error("Cloned, but there's no package.json at the root: Truecanvas needs a Next.js app.");
+    if (!fs.existsSync(path.join(dir, "package.json"))) throw new Error("Cloned, but there's no package.json at the root: Truecanvas needs a Next.js or Vite app.");
     const pm = packageManager(dir);
     await install(job, pm.cmd, ["install"], dir).catch(async (err) => {
       if (!fs.existsSync(path.join(dir, "node_modules"))) throw err;

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveAliasPath } from "./catalog.js";
 import { detectPm, dlx, run } from "./pm.js";
+import { posix } from "./paths.js";
 
 /*
  * shadcn/ui: components are copied into the project as source (components/ui),
@@ -38,7 +39,7 @@ export function shadcnStatus(root: string): ShadcnStatus {
   } catch {
     installed = [];
   }
-  return { initialized: true, uiDir: path.relative(root, dir), installed };
+  return { initialized: true, uiDir: posix(path.relative(root, dir)), installed };
 }
 
 /** Used when the registry can't be reached (offline). */

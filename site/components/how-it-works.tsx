@@ -34,7 +34,7 @@ export function HowItWorks() {
         <Reveal stagger={0.08} className="flex flex-col gap-5 md:sticky md:top-28 md:self-start">
           <h2 className="text-4xl font-semibold tracking-tight text-balance">Running in your app in about a minute.</h2>
           <p className="text-[15px] leading-relaxed text-muted">
-            Needs a Next.js App Router project with Tailwind, and Node 20 or newer. Production builds are untouched.
+            Works in Next.js (App Router) and Vite + React apps with Tailwind, on macOS, Linux and Windows, with Node 20 or newer. Production builds are untouched.
           </p>
           <div className="flex flex-col items-start gap-3 pt-2">
             <CommandPill command="npx truecanvas" />
@@ -48,8 +48,8 @@ export function HowItWorks() {
             icon={<Icon d="M4 17l6-5-6-5M12 19h8" />}
             lead={
               <>
-                <strong className="font-semibold text-ink">Run it from your project root.</strong> It asks once, then adds a dev dependency, wraps
-                next.config and writes a canvas with your homepage on it.
+                <strong className="font-semibold text-ink">Run it from your project root.</strong> It asks once, then adds a dev dependency, enables
+                its plugin in next.config or vite.config and writes a canvas with your homepage on it.
               </>
             }
           >
@@ -62,11 +62,11 @@ export function HowItWorks() {
                 <span className="text-white/40">$ </span>
                 <span className="text-white">npx truecanvas</span>
                 {"\n\n  "}
-                <span className="text-coral">◆</span> <span className="font-semibold text-white">Truecanvas</span> <span className="text-white/40">v0.1.0</span>
+                <span className="text-coral">◆</span> <span className="font-semibold text-white">Truecanvas</span> <span className="text-white/40">v0.2.0</span>
                 {"\n\n"}
                 {"  This adds Truecanvas to "}
                 <span className="font-semibold text-white">acme-web</span>
-                {": a dev dependency, a wrapper in next.config,\n  a "}
+                {": a dev dependency, a plugin in next.config,\n  a "}
                 <span className="font-semibold text-white">canvas</span>
                 {" script and a canvas with your homepage.\n\n"}
                 {[

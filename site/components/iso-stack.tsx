@@ -30,6 +30,7 @@ interface Tile {
 const S = 54;
 const TILES: Tile[] = [
   { key: "next", brand: "next", label: "Next.js", x: -175, y: -60, size: S, h: 12 },
+  { key: "vite", brand: "vite", label: "Vite", x: -170, y: -160, size: S, h: 12 },
   { key: "react", brand: "react", label: "React", x: -150, y: 70, size: S, h: 12 },
   { key: "tailwind", brand: "tailwind", label: "Tailwind", x: -60, y: -175, size: S, h: 12 },
   { key: "typescript", brand: "typescript", label: "TypeScript", x: 60, y: -160, size: S, h: 12 },
@@ -77,7 +78,7 @@ export function IsoStack({ className = "" }: { className?: string }) {
     grid.push(line([-260, k * 40, 0], [260, k * 40, 0]));
   }
   return (
-    <svg viewBox="0 0 600 380" className={`h-auto w-full overflow-visible ${className}`} role="img" aria-label="Truecanvas connects your stack (Next.js, React, Tailwind, TypeScript, GitHub) and your agents (Claude Code, Cursor)">
+    <svg viewBox="0 0 600 380" className={`h-auto w-full overflow-visible ${className}`} role="img" aria-label="Truecanvas connects your stack (Next.js, Vite, React, Tailwind, TypeScript, GitHub) and your agents (Claude Code, Cursor)">
       <defs>
         <radialGradient id="iso-fade" cx="50%" cy="45%" r="55%">
           <stop offset="0" stopColor="#fff" stopOpacity="1" />

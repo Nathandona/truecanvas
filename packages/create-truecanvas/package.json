@@ -1,7 +1,7 @@
 {
   "name": "create-truecanvas",
   "version": "0.2.0",
-  "description": "Create a Next.js app with Truecanvas set up: npm create truecanvas",
+  "description": "Create a Next.js or Vite app with Truecanvas set up: npm create truecanvas",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -17,6 +17,7 @@
   "keywords": [
     "truecanvas",
     "nextjs",
+    "vite",
     "react",
     "design",
     "canvas",

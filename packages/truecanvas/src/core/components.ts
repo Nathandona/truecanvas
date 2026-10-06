@@ -125,7 +125,7 @@ export function componentFile(name: string, jsx: string, imports: string[]): str
 
 /** Path for a new component, refusing to overwrite. */
 export function newComponentPath(config: TruecanvasConfig, name: string): string {
-  const rel = path.join(componentsDir(config), `${kebab(name)}.tsx`);
+  const rel = `${componentsDir(config)}/${kebab(name)}.tsx`;
   if (fs.existsSync(path.join(config.root, rel))) throw new EditError(`${rel} already exists. Pick another name.`);
   return rel;
 }

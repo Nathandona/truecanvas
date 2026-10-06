@@ -24,6 +24,7 @@ export function App() {
   const toasts = useStore((s) => s.toasts);
   const appStatus = useStore((s) => s.appStatus);
   const appUrl = useStore((s) => s.appUrl);
+  const framework = useStore((s) => s.framework);
   const connected = useStore((s) => s.connected);
   const docError = useStore((s) => s.docError);
 
@@ -39,6 +40,7 @@ export function App() {
       useStore.setState({
         ready: true,
         appUrl: state.appUrl,
+        framework: state.framework ?? "next",
         projectName: state.projectName,
         componentsDir: state.componentsDir ?? "components",
         mcpUrl: state.mcpUrl,
@@ -166,7 +168,7 @@ export function App() {
             <div>
               <div style={{ fontWeight: 600 }}>Your app isn’t running</div>
               <div className="muted">
-                Start <span className="mono">next dev</span>. Frames render from <span className="mono">{appUrl}</span>
+                Start <span className="mono">{framework === "vite" ? "vite" : "next dev"}</span>. Frames render from <span className="mono">{appUrl}</span>
               </div>
             </div>
             <button className="btn outline" onClick={() => useStore.setState({ appStatus: "checking" })}>

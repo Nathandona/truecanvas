@@ -1,7 +1,7 @@
 {
   "name": "truecanvas",
   "version": "0.2.0",
-  "description": "Design with your real React components: a Figma-like canvas for Next.js where layers are your .tsx and agents edit through MCP.",
+  "description": "Design with your real React components: a Figma-like canvas for Next.js and Vite where layers are your .tsx and agents edit through MCP.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -15,6 +15,10 @@
     "./next": {
       "types": "./dist/next/index.d.ts",
       "default": "./dist/next/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite/index.d.ts",
+      "default": "./dist/vite/index.js"
     },
     "./core": {
       "types": "./dist/core/index.d.ts",
@@ -33,21 +37,25 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsup && vite build --config editor/vite.config.ts",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup && vite build --config editor/vite.config.ts",
     "build:lib": "tsup",
     "build:editor": "vite build --config editor/vite.config.ts",
     "dev:editor": "vite --config editor/vite.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p editor/tsconfig.json",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test",
     "prepublishOnly": "pnpm build && pnpm test",
     "prepack": "node ../../scripts/sync-readme.mjs"
   },
   "peerDependencies": {
     "next": ">=15.0",
-    "react": ">=19"
+    "react": ">=19",
+    "vite": ">=5"
   },
   "peerDependenciesMeta": {
     "next": {
+      "optional": true
+    },
+    "vite": {
       "optional": true
     }
   },
@@ -82,6 +90,7 @@
     "figma",
     "react",
     "nextjs",
+    "vite",
     "tailwind",
     "mcp",
     "agents",

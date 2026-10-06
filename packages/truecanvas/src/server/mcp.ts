@@ -546,7 +546,7 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
     async ({ name }) => {
       try {
         ws.createCanvas(name, actor());
-        return text(`✓ Created canvas ${name} (${ws.relFile(name)}). Next.js picks the new route up in a second.`);
+        return text(`✓ Created canvas ${name} (${ws.relFile(name)}). The app picks it up in a second.`);
       } catch (e) {
         return fail(e);
       }

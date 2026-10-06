@@ -81,10 +81,11 @@ export function inspect(dir: string): Omit<ProjectInfo, keyof ProjectRecord> {
       /* no canvas dir */
     }
   }
-  return { next: "next" in deps, ready: "truecanvas" in deps, canvases, exists: true };
+  // `next`: an app Truecanvas can run in (Next.js, or Vite + React)
+  return { next: "next" in deps || ("vite" in deps && "react" in deps), ready: "truecanvas" in deps, canvases, exists: true };
 }
 
-/** Next.js apps in the usual code folders (a few levels deep, skipping node_modules). */
+/** Next.js and Vite apps in the usual code folders (a few levels deep, skipping node_modules). */
 export function discover(): { path: string; name: string; ready: boolean }[] {
   const home = os.homedir();
   const roots = ["Github", "GitHub", "github", "Projects", "projects", "code", "Code", "dev", "src", "Developer", "Documents", "work"]
@@ -116,7 +117,7 @@ export function discover(): { path: string; name: string; ready: boolean }[] {
 
 /** Sub-folders for the "Open folder" picker. */
 export function listDirs(dir: string): { path: string; dirs: { name: string; next: boolean }[] } {
-  const abs = path.resolve(dir.replace(/^~(?=$|\/)/, os.homedir()));
+  const abs = path.resolve(dir.replace(/^~(?=$|[\\/])/, os.homedir()));
   const dirs = fs
     .readdirSync(abs, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
