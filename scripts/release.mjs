@@ -24,5 +24,6 @@ for (const f of files) {
 }
 git("add", ...files);
 git("commit", "-m", `Release v${version}`);
-git("tag", `v${version}`);
+// annotated: `git push --follow-tags` only pushes annotated tags
+git("tag", "-a", `v${version}`, "-m", `Truecanvas ${version}`);
 console.log(`\nTagged v${version}. Publish with: git push --follow-tags\n`);
