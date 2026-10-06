@@ -65,6 +65,9 @@ export function readImports(ast: t.File): ImportInfo[] {
       typeOnly,
       // value bindings only: `import type` and `{ type X }` don't exist at runtime
       names: typeOnly ? [] : [...named.filter((s) => s.importKind !== "type").map((s) => s.local.name), ...(ns ? [ns.local.name] : [])],
+      bindings: typeOnly
+        ? []
+        : named.filter((s) => s.importKind !== "type").map((s) => ({ imported: s.imported.type === "Identifier" ? s.imported.name : s.imported.value, local: s.local.name })),
       defaultName: def ? def.local.name : null,
       start: stmt.start!,
       end: stmt.end!,

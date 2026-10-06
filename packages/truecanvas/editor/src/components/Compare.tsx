@@ -2,12 +2,10 @@ import { memo, useMemo } from "react";
 import { GitCompare, X } from "lucide-react";
 import { useStore, effectiveTheme } from "../lib/store";
 import { registerFrame } from "../lib/bridge";
-import { frameHeight } from "../lib/actions";
 import type { CanvasFrame } from "../lib/api";
 import { Segmented, SliderField } from "./controls";
 import { stopCompare } from "./GitPanel";
 
-export const COMPARE_GAP = 64;
 
 /** Horizontal offset of the "before" copy: entirely to the right of the current canvas. */
 function beforeOffset(): number {
@@ -111,6 +109,3 @@ export function changeBadge(frameName: string): { text: string; tone: string } |
   return null;
 }
 
-export function compareFrameHeight(f: CanvasFrame) {
-  return f.height ?? useStore.getState().frameHeights[`cmp:${f.frameName}`] ?? frameHeight(f);
-}

@@ -72,6 +72,7 @@ export type Command =
   | { op: "set_class"; canvas: string; id: string; className: string }
   | { op: "insert_jsx"; canvas: string; parent: string; index?: number; jsx: string }
   | { op: "insert_component"; canvas: string; parent: string; index?: number; component: string; props?: Record<string, Literal>; text?: string }
+  | { op: "insert_icon"; canvas: string; parent: string; index?: number; library: string; name: string; className?: string }
   | { op: "replace"; canvas: string; id: string; jsx: string }
   | { op: "duplicate"; canvas: string; ids: string[] }
   | { op: "delete"; canvas: string; ids: string[] }
@@ -91,6 +92,18 @@ export type Command =
   | { op: "add_component_frame"; canvas: string; component: string }
   | { op: "create_variants"; canvas: string; component: string; prop: string };
 
+export interface ShadcnStatus {
+  initialized: boolean;
+  uiDir: string | null;
+  installed: string[];
+}
+
+export interface LibraryState {
+  packageManager: string;
+  icons: { id: string; label: string; package: string; from: string; homepage: string; version: string | null }[];
+  shadcn: ShadcnStatus;
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json();
@@ -102,6 +115,11 @@ export const api = {
   state: () => call<ServerState>("/api/state"),
   canvas: (name: string) => call<{ doc: CanvasDoc; history: { undo: number; redo: number } }>(`/api/canvas?name=${encodeURIComponent(name)}`),
   components: () => call<{ components: ComponentSpec[] }>("/api/components"),
+  libraries: () => call<LibraryState>("/api/libraries"),
+  shadcnRegistry: () => call<{ names: string[]; offline: boolean; status: ShadcnStatus }>("/api/libraries/shadcn"),
+  icons: (library: string, q: string, limit = 240) => call<{ total: number; icons: { name: string; svg: string }[] }>(`/api/icons?library=${encodeURIComponent(library)}&q=${encodeURIComponent(q)}&limit=${limit}`),
+  installIcons: (id: string) => call<{ ok: boolean; out: string; package: string; state: LibraryState }>("/api/libraries/icons", { id }),
+  addShadcn: (names: string[]) => call<{ ok: boolean; out: string; added: string[]; state: LibraryState }>("/api/libraries/shadcn", { names }),
   command: (cmd: Command) => call<{ doc: CanvasDoc; ids: string[]; label: string }>("/api/command", cmd),
   undo: (canvas: string) => call<{ doc: CanvasDoc; label: string }>("/api/undo", { canvas }),
   redo: (canvas: string) => call<{ doc: CanvasDoc; label: string }>("/api/redo", { canvas }),
@@ -141,22 +159,36 @@ export const api = {
   source: (canvas: string, id: string) => call<{ code: string }>("/api/source", { canvas, id }),
 };
 
-export function subscribe(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void) {
+/**
+ * Server events over SSE. Reconnects after a drop; `onResync` runs on every
+ * reconnect, since events sent while disconnected are lost.
+ */
+export function subscribe(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void, onResync: () => void = () => {}) {
   let es: EventSource | null = null;
   let closed = false;
+  let retry = 0;
+  let dropped = false;
   const connect = () => {
+    if (closed) return;
     es = new EventSource("/api/events");
-    es.onopen = () => onStatus(true);
+    es.onopen = () => {
+      onStatus(true);
+      if (dropped) onResync();
+      dropped = false;
+    };
     es.onmessage = (m) => onEvent(JSON.parse(m.data));
     es.onerror = () => {
       onStatus(false);
+      dropped = true;
       es?.close();
-      if (!closed) setTimeout(connect, 1500);
+      clearTimeout(retry);
+      if (!closed) retry = window.setTimeout(connect, 1500);
     };
   };
   connect();
   return () => {
     closed = true;
+    clearTimeout(retry);
     es?.close();
   };
 }
@@ -179,7 +211,7 @@ export interface GitStatus {
   upstream: string | null;
   ahead: number;
   behind: number;
-  files: { path: string; status: "modified" | "added" | "deleted" | "renamed" | "untracked"; staged: boolean }[];
+  files: { path: string; status: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted"; staged: boolean }[];
   user: string | null;
   /** page and layout files shown by linked frames */
   linked?: string[];

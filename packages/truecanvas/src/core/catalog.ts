@@ -324,9 +324,24 @@ export function importSpecifier(root: string, canvasFile: string, componentFile:
   return rel;
 }
 
-let aliasCache: { root: string; value: { prefix: string; dir: string } | null } | null = null;
+/** A path written with the project's import alias (`@/components/ui`), as a folder on disk. */
+export function resolveAliasPath(root: string, spec: string): string {
+  const alias = readAlias(root);
+  if (alias && spec.startsWith(alias.prefix)) return path.join(alias.dir, spec.slice(alias.prefix.length));
+  return path.resolve(root, spec);
+}
+
+let aliasCache: { key: string; value: { prefix: string; dir: string } | null } | null = null;
+/** The project's `@/*`-style alias, re-read whenever tsconfig.json changes. */
 function readAlias(root: string) {
-  if (aliasCache?.root === root) return aliasCache.value;
+  const configFile = path.join(root, "tsconfig.json");
+  let key = `${root}\0none`;
+  try {
+    key = `${root}\0${fs.statSync(configFile).mtimeMs}`;
+  } catch {
+    // no tsconfig at the root: findConfigFile may still find one above
+  }
+  if (aliasCache?.key === key) return aliasCache.value;
   let value: { prefix: string; dir: string } | null = null;
   try {
     const ts = require("typescript") as typeof TS;
@@ -336,9 +351,9 @@ function readAlias(root: string) {
       const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, path.dirname(configPath));
       const paths = parsed.options.paths ?? {};
       const base = (parsed.options.pathsBasePath as string | undefined) ?? parsed.options.baseUrl ?? path.dirname(configPath);
-      for (const [key, targets] of Object.entries(paths)) {
-        if (key.endsWith("/*") && targets[0]?.endsWith("/*")) {
-          value = { prefix: key.slice(0, -1), dir: path.resolve(base, targets[0].slice(0, -2)) };
+      for (const [k, targets] of Object.entries(paths)) {
+        if (k.endsWith("/*") && targets[0]?.endsWith("/*")) {
+          value = { prefix: k.slice(0, -1), dir: path.resolve(base, targets[0].slice(0, -2)) };
           break;
         }
       }
@@ -346,6 +361,6 @@ function readAlias(root: string) {
   } catch {
     value = null;
   }
-  aliasCache = { root, value };
+  aliasCache = { key, value };
   return value;
 }

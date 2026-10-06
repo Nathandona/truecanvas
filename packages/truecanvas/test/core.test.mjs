@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { injectIds, parseCanvas, Workspace, loadConfig, outlineDoc } from "../dist/core/index.js";
+import { injectIds, parseCanvas, Workspace, loadConfig, outlineDoc, iconLibraries, loadIcons, searchIcons, shadcnStatus, Git, wrapConfigExport } from "../dist/core/index.js";
+import { execFileSync } from "node:child_process";
 
 const CANVAS = `"use client";
 import { Canvas, Frame } from "truecanvas";
@@ -688,4 +689,245 @@ test("set_props: new props survive changing or removing the last attribute in th
   const again = idOf((n) => n.name === "Button" && n.props.size);
   await ws.run({ op: "set_props", canvas: "demo", id: again, props: { className: null, title: "Save" } }, user);
   assert.match(read(), /<Button size="sm" disabled variant="ghost" title="Save" \/>/);
+});
+
+test("icons: installed libraries render to SVG, insert with an import, alias on name clashes", async () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-icons-"));
+  fs.mkdirSync(path.join(proj, "canvas"));
+  fs.mkdirSync(path.join(proj, "node_modules/lucide-react"), { recursive: true });
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ dependencies: { "lucide-react": "1.0.0" } }));
+  for (const dep of ["react", "react-dom"]) fs.symlinkSync(path.resolve(`../../examples/playground/node_modules/${dep}`), path.join(proj, "node_modules", dep));
+  // shaped like lucide: icons plus `XIcon` and `LucideX` aliases and a generic `Icon`
+  fs.writeFileSync(path.join(proj, "node_modules/lucide-react/package.json"), JSON.stringify({ name: "lucide-react", version: "1.0.0", type: "module", main: "index.js" }));
+  fs.writeFileSync(
+    path.join(proj, "node_modules/lucide-react/index.js"),
+    `import { createElement as h } from "react";
+const make = (d) => (props) => h("svg", { viewBox: "0 0 24 24", className: "lucide", ...props }, h("path", { d }));
+export const Search = make("M11 11m-8 0a8 8 0 1 0 16 0");
+export const House = make("M3 10l9-7 9 7");
+export const SearchIcon = Search;
+export const LucideSearch = Search;
+export const Icon = make("M0 0");
+export const icons = { Search, House };`,
+  );
+  fs.writeFileSync(
+    path.join(proj, "canvas/demo.canvas.tsx"),
+    `"use client";
+import { Canvas, Frame } from "truecanvas";
+
+function Search() {
+  return <input />;
+}
+
+export default function Demo() {
+  return (
+    <Canvas>
+      <Frame name="Main" x={0} y={0} width={400}>
+        <div className="flex gap-2">
+          <Search />
+        </div>
+      </Frame>
+    </Canvas>
+  );
+}
+`,
+  );
+  const lib = iconLibraries(proj).find((l) => l.id === "lucide");
+  assert.equal(lib.version, "1.0.0");
+  const icons = await loadIcons(proj, "lucide");
+  assert.deepEqual(icons.map((i) => i.name), ["House", "Search"], "aliases and non-icons dropped");
+  assert.match(icons[1].svg, /^<svg[^>]*viewBox="0 0 24 24"/);
+  assert.doesNotMatch(icons[1].svg, /class=/, "classes stripped from previews");
+  assert.deepEqual(searchIcons(icons, "sea").icons.map((i) => i.name), ["Search"]);
+
+  const pws = new Workspace(loadConfig(proj));
+  const doc = () => fs.readFileSync(path.join(proj, "canvas/demo.canvas.tsx"), "utf8");
+  // ids shift when an import line is added: read the container's id before each edit
+  const stack = () => parseCanvas("demo", "canvas/demo.canvas.tsx", doc()).frames[0].children[0].id;
+  // the canvas declares its own Search: lucide's comes in as SearchIcon
+  await pws.run({ op: "insert_icon", canvas: "demo", parent: stack(), library: "lucide", name: "search" }, user);
+  assert.match(doc(), /import \{ Search as SearchIcon \} from "lucide-react";/);
+  assert.match(doc(), /<SearchIcon className="size-4" \/>/);
+  assert.match(doc(), /<Search \/>/, "the local Search is untouched");
+  // a second icon joins the same import
+  await pws.run({ op: "insert_icon", canvas: "demo", parent: stack(), library: "lucide-react", name: "House", className: "size-5 text-muted" }, user);
+  assert.match(doc(), /import \{ Search as SearchIcon, House \} from "lucide-react";/);
+  assert.match(doc(), /<House className="size-5 text-muted" \/>/);
+  await assert.rejects(pws.run({ op: "insert_icon", canvas: "demo", parent: stack(), library: "lucide", name: "Serch" }, user), /No icon "Serch".*Did you mean Search/);
+  await assert.rejects(pws.run({ op: "insert_icon", canvas: "demo", parent: stack(), library: "nope", name: "X" }, user), /Unknown icon library/);
+});
+
+test("shadcn: status reads components.json and the ui folder through the import alias", () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-shadcn-"));
+  fs.writeFileSync(path.join(proj, "package.json"), "{}");
+  assert.deepEqual(shadcnStatus(proj), { initialized: false, uiDir: null, installed: [] });
+  fs.writeFileSync(path.join(proj, "tsconfig.json"), JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }));
+  fs.writeFileSync(path.join(proj, "components.json"), JSON.stringify({ aliases: { ui: "@/components/ui" } }));
+  fs.mkdirSync(path.join(proj, "src/components/ui"), { recursive: true });
+  for (const f of ["button.tsx", "card.tsx", "utils.ts"]) fs.writeFileSync(path.join(proj, "src/components/ui", f), "");
+  assert.deepEqual(shadcnStatus(proj), { initialized: true, uiDir: path.join("src", "components", "ui"), installed: ["button", "card"] });
+});
+
+test("git: status keeps unusual paths intact, reports renames and conflicts, rejects option-like refs", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-git-"));
+  const g = (...args) => execFileSync("git", args, { cwd: repo, stdio: "pipe", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).toString();
+  g("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "old.txt"), "a\n");
+  fs.writeFileSync(path.join(repo, "both.txt"), "base\n");
+  g("add", ".");
+  g("commit", "-qm", "base");
+  g("switch", "-qc", "other");
+  fs.writeFileSync(path.join(repo, "both.txt"), "theirs\n");
+  g("commit", "-qam", "theirs");
+  g("switch", "-q", "main");
+  fs.writeFileSync(path.join(repo, "both.txt"), "ours\n");
+  g("commit", "-qam", "ours");
+  try {
+    g("merge", "-q", "other");
+  } catch {
+    // conflict expected
+  }
+  g("mv", "old.txt", "new name.txt");
+  fs.writeFileSync(path.join(repo, "café.canvas.tsx"), "x");
+  const status = await new Git(repo).status();
+  const byPath = Object.fromEntries(status.files.map((f) => [f.path, f.status]));
+  assert.equal(byPath["café.canvas.tsx"], "untracked");
+  assert.equal(byPath["new name.txt"], "renamed");
+  assert.equal(byPath["both.txt"], "conflicted");
+  assert.equal(Object.keys(byPath).length, 3, JSON.stringify(byPath));
+  await assert.rejects(new Git(repo).show("--output=/tmp/x", "both.txt"), /Invalid git ref/);
+  await assert.rejects(new Git(repo).switch("-b"), /Invalid git ref/);
+});
+
+test("init: wraps only the exported next.config expression", () => {
+  const imp = `import { withTruecanvas } from "truecanvas/next";`;
+  const a = wrapConfigExport(`const nextConfig = {};\nexport default nextConfig;\n\n// see docs\n`);
+  assert.ok(a.includes("export default withTruecanvas(nextConfig);\n\n// see docs\n"), a);
+  assert.ok(a.includes(imp));
+  const b = wrapConfigExport(`export default function config(phase) {\n  return {};\n}\n`);
+  assert.match(b, /^import \{ withTruecanvas \}[\s\S]*function config\(phase\) \{\n  return \{\};\n\}\n\nexport default withTruecanvas\(config\);/);
+  const c = wrapConfigExport(`export default (phase) => ({ reactStrictMode: true });\n`);
+  assert.match(c, /export default withTruecanvas\(\(phase\) => \(\{ reactStrictMode: true \}\)\);/);
+  const d = wrapConfigExport(`/** @type {import('next').NextConfig} */\nmodule.exports = { images: {} };\n// trailing\n`);
+  assert.match(d, /^const \{ withTruecanvas \} = require\("truecanvas\/next"\);\n/);
+  assert.match(d, /module\.exports = withTruecanvas\(\{ images: \{\} \}\);\n\/\/ trailing\n$/);
+  assert.equal(wrapConfigExport(`const x = 1;\n`), null);
+});
+
+/** An isolated project with one canvas; `id(pred)` finds a layer's current id. */
+function project(canvasBody, files = {}) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-fix-"));
+  for (const dir of ["canvas", "components", "app"]) fs.mkdirSync(path.join(proj, dir));
+  fs.writeFileSync(path.join(proj, "package.json"), "{}");
+  fs.writeFileSync(path.join(proj, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true, paths: { "@/*": ["./*"] } } }));
+  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(proj, "node_modules"));
+  for (const [rel, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(proj, rel)), { recursive: true });
+    fs.writeFileSync(path.join(proj, rel), content);
+  }
+  const canvasFile = path.join(proj, "canvas/demo.canvas.tsx");
+  fs.writeFileSync(canvasFile, canvasBody.includes("<Canvas>") ? canvasBody : `"use client";\nimport { Canvas, Frame } from "truecanvas";\n\nexport default function Demo() {\n  return (\n    <Canvas>\n      <Frame name="Main" x={0} y={0} width={400}>\n${canvasBody}\n      </Frame>\n    </Canvas>\n  );\n}\n`);
+  const w = new Workspace(loadConfig(proj));
+  const read = () => fs.readFileSync(canvasFile, "utf8");
+  const nodes = () => {
+    const out = [];
+    const walk = (n) => {
+      out.push(n);
+      n.children.forEach(walk);
+    };
+    parseCanvas("demo", "canvas/demo.canvas.tsx", read()).frames.forEach(walk);
+    return out;
+  };
+  const id = (pred) => nodes().find(pred)?.id;
+  return { proj, ws: w, read, id, canvasFile };
+}
+
+test("security: ids can't reach files the canvas doesn't show, canvas names can't be paths", async () => {
+  const { proj, ws: w, id } = project(`        <p>Hi</p>`);
+  const outside = path.join(path.dirname(proj), `outside-${path.basename(proj)}.tsx`);
+  fs.writeFileSync(outside, "export default function X() { return <p>safe</p>; }\n");
+  const evil = `${path.relative(proj, outside)}#1:41`;
+  await assert.rejects(w.run({ op: "set_text", canvas: "demo", id: evil, text: "PWNED" }, user), /isn't shown on this canvas/);
+  assert.match(fs.readFileSync(outside, "utf8"), /safe/);
+  assert.deepEqual(w.comments.list("../../etc/x"), [], "reads nothing outside the canvas folder");
+  assert.throws(() => w.comments.add("../../../tmp/x", { frame: "Main", x: 0, y: 0, text: "hi", author: { kind: "user", name: "t" } }), /Invalid canvas name/);
+  void id;
+});
+
+test("edits keep content intact: $ in copied pages, JSX comments, multi-line strings, generics", async () => {
+  const page = `export default function Pricing() {\n  return (\n    <main>\n      <p>Plans from $$ to $$$, or $& off</p>\n    </main>\n  );\n}\n`;
+  const { ws: w, read, id } = project(
+    `        <div className="a">
+          <p>{/* legal: keep wording */}Hello</p>
+          <pre>{\`line1
+  indented
+line3\`}</pre>
+          <List<string> items={[]} />
+        </div>
+        <section className="b" />`,
+    { "app/pricing/page.tsx": page, "components/list.tsx": "export function List<T>({ items }: { items: T[] }) { return <ul />; }\n" },
+  );
+  await w.run({ op: "import_route", canvas: "demo", route: "/pricing", copy: true }, user);
+  assert.ok(read().includes("Plans from $$ to $$$, or $& off"), "dollar sequences stay literal");
+
+  await w.run({ op: "set_text", canvas: "demo", id: id((n) => n.name === "p" && n.children.some((c) => c.kind === "text" && /Hello/.test(c.text ?? c.value ?? ""))) ?? id((n) => n.name === "p"), text: "Hi" }, user);
+  assert.match(read(), /<p>\{\/\* legal: keep wording \*\/\}Hi<\/p>/);
+
+  const section = () => id((n) => n.name === "section");
+  await w.run({ op: "move", canvas: "demo", id: id((n) => n.name === "pre"), parent: section() }, user);
+  assert.ok(read().includes("{`line1\n  indented\nline3`}"), "template literal content unchanged");
+
+  await w.run({ op: "move", canvas: "demo", id: id((n) => n.name === "List"), parent: section() }, user);
+  assert.match(read(), /<List<string> items=\{\[\]\} \/>/);
+});
+
+test("duplicate several siblings selects the copies; create_component alone adds no import", async () => {
+  const { ws: w, read, id, proj } = project(`        <div>\n          <h1>A</h1>\n          <h2>B</h2>\n        </div>`);
+  const res = await w.run({ op: "duplicate", canvas: "demo", ids: [id((n) => n.name === "h1"), id((n) => n.name === "h2")] }, user);
+  const kids = parseCanvas("demo", "canvas/demo.canvas.tsx", read()).frames[0].children[0].children.filter((c) => c.kind !== "text");
+  assert.deepEqual(kids.map((k) => k.name), ["h1", "h1", "h2", "h2"]);
+  assert.deepEqual([...res.ids].sort(), [kids[1].id, kids[3].id].sort(), "the two copies are selected");
+
+  const before = read();
+  await w.run({ op: "create_component", canvas: "demo", name: "PricingCard" }, user);
+  assert.equal(read(), before, "no unused import in the canvas");
+  assert.ok(fs.readdirSync(path.join(proj, "components")).some((f) => /pricing-card/i.test(f)), "the component file is written");
+});
+
+test("CRLF files stay CRLF and deletes leave no blank lines", async () => {
+  const { ws: w, read, id, canvasFile } = project(`        <div>\n          <h1>A</h1>\n          <p>B</p>\n        </div>`);
+  fs.writeFileSync(canvasFile, read().replace(/\n/g, "\r\n"));
+  const w2 = new Workspace(loadConfig(path.dirname(path.dirname(canvasFile))));
+  await w2.run({ op: "delete", canvas: "demo", ids: [id((n) => n.name === "h1")] }, user);
+  const out = read();
+  assert.ok(!/(^|[^\r])\n/.test(out), "every line ending is CRLF");
+  assert.ok(!/\r\n[ \t]*\r\n[ \t]*<p>/.test(out), "no blank line left where h1 was");
+  assert.match(out, /<div>\r\n {10}<p>B<\/p>/);
+  void w;
+});
+
+test("server: serves the editor and its assets, refuses paths outside, binds to localhost", async () => {
+  const { proj } = project(`        <p>Hi</p>`);
+  const port = 4950 + Math.floor(Math.random() * 40);
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, [path.resolve("dist/cli.js"), "dev", "--no-next", "--no-open", "--port", String(port)], { cwd: proj, stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    let html = "";
+    for (let i = 0; i < 60 && !html; i++) {
+      html = await fetch(base).then((r) => r.text()).catch(() => "");
+      if (!html) await new Promise((r) => setTimeout(r, 200));
+    }
+    const script = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+    assert.ok(script, "index.html references a script");
+    const res = await fetch(base + script);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /javascript/, "assets are served as JS, not the index fallback");
+    const escape = await fetch(`${base}/..%2f..%2fpackage.json`).then((r) => r.text());
+    assert.doesNotMatch(escape, /"name"/, "no file outside the editor bundle");
+    const foreign = await fetch(`${base}/api/state`, { headers: { origin: "https://evil.example" } });
+    assert.equal(foreign.status, 403, "other origins are refused");
+  } finally {
+    child.kill();
+  }
 });

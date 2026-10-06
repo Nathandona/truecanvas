@@ -1570,49 +1570,70 @@ details.advanced summary::-webkit-details-marker {
   top: 0;
   pointer-events: none;
   z-index: 8;
+  will-change: transform;
   transition: opacity 0.6s;
-  animation: cursor-in 0.25s ease-out;
+  animation: cursor-in 0.2s ease-out;
 }
 .agent-cursor.fading {
   opacity: 0;
 }
 .agent-cursor .arrow {
   position: absolute;
-  left: -3px;
+  left: -2px;
   top: -2px;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.28));
 }
-.agent-pill {
+/* compact, like the best multiplayer cursors: the name, then what it's doing */
+.agent-chip {
   position: absolute;
-  left: 15px;
-  top: 19px;
+  left: 13px;
+  top: 15px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 280px;
-  padding: 4px 9px 4px 8px;
-  border-radius: 4px 12px 12px 12px;
+  max-width: 240px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px 10px 10px 10px;
   background: var(--c);
   color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
+  font-size: 11.5px;
+  line-height: 20px;
   white-space: nowrap;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--c) 40%, transparent), 0 1px 2px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 4px 12px color-mix(in srgb, var(--c) 28%, transparent);
 }
-.agent-pill .what {
-  opacity: 0.85;
-  font-weight: 400;
+.agent-chip .who {
+  font-weight: 600;
+  flex: none;
+}
+.agent-chip .what {
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  opacity: 0.88;
   overflow: hidden;
   text-overflow: ellipsis;
+  animation: chip-label 0.2s ease-out;
 }
-.agent-pill .busy-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #fff;
-  flex: none;
-  animation: busy 1s ease-in-out infinite;
+/* editing: a soft sheen runs across the chip */
+.agent-chip.busy {
+  background-image: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: chip-sheen 1.3s linear infinite;
+}
+@keyframes chip-sheen {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@keyframes chip-label {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
 }
 .frame-glow {
   position: absolute;
@@ -3525,4 +3546,201 @@ details.advanced summary::-webkit-details-marker {
 }
 :root[data-ui="dark"] .frame-label .link-tag.component {
   color: #c4b5fd;
+}
+
+/* ---------- libraries (icons, shadcn/ui) ---------- */
+.lib-tabs {
+  margin: 4px 0 14px;
+}
+.lib-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+}
+.lib-list .lib-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 0.5px solid var(--border);
+}
+.lib-row-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lib-name {
+  font-weight: 500;
+}
+.icon-picker-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.search-field {
+  flex: 1;
+}
+.lib-select {
+  height: 28px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--field);
+  color: var(--text);
+  padding: 0 8px;
+}
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.icon-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  transition: background 0.12s;
+}
+.icon-cell:hover,
+.icon-cell:focus-visible {
+  background: var(--hover);
+}
+.icon-svg {
+  display: grid;
+  place-items: center;
+}
+.icon-svg svg {
+  width: 20px;
+  height: 20px;
+}
+.lib-empty {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+.lib-foot {
+  margin-top: 10px;
+  font-size: 11px;
+}
+.shadcn-tab .search-field {
+  margin-bottom: 10px;
+}
+.shadcn-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.shadcn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.shadcn-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+.shadcn-item:disabled {
+  color: var(--text-2);
+}
+.shadcn-item .faint {
+  margin-left: auto;
+  font-size: 11px;
+}
+.shadcn-check {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.shadcn-item.on .shadcn-check {
+  background: var(--accent);
+  box-shadow: none;
+  color: #fff;
+}
+.lib-actions {
+  margin-top: 12px;
+  align-items: center;
+}
+.lib-actions .faint {
+  margin-right: auto;
+}
+.assets-empty-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.library-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: calc(100% - 12px);
+  margin: 0 6px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.library-link:hover {
+  background: var(--hover);
+}
+.library-link > svg {
+  margin-top: 2px;
+  color: var(--text-2);
+}
+.library-link span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.library-link .faint {
+  font-size: 11px;
+}
+.page-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  outline: none;
+}
+.page-row:has(.page-open:focus-visible) {
+  background: var(--hover);
+}
+.frame-box .placeholder {
+  transition: opacity 0.25s ease;
+}
+.frame-box .placeholder.gone {
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
 }

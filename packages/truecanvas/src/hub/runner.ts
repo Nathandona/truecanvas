@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { packageSpec } from "../cli/setup.js";
+import { detectPm, addArgs, toolEnv, type Pm } from "../core/pm.js";
 
 export interface Running {
   path: string;
@@ -40,17 +41,41 @@ export class Runner {
     private onChange: () => void,
   ) {}
 
-  async open(dir: string): Promise<Running> {
+  private opening = new Map<string, Promise<Running>>();
+  private ports: Promise<unknown> = Promise.resolve();
+
+  /** Opens a project; concurrent calls for the same folder share one start. */
+  open(dir: string): Promise<Running> {
     const existing = this.running.get(dir);
-    if (existing && existing.status !== "failed") return existing;
-    const taken = new Set([...this.running.values()].flatMap((r) => [r.editorPort, r.appPort]));
-    const editorPort = await freePort(4810, taken);
-    taken.add(editorPort);
-    const appPort = await freePort(3010, taken);
+    if (existing && existing.status !== "failed") return Promise.resolve(existing);
+    const pending = this.opening.get(dir);
+    if (pending) return pending;
+    const job = this.start(dir).finally(() => this.opening.delete(dir));
+    this.opening.set(dir, job);
+    return job;
+  }
+
+  /** Two ports, picked one project at a time so parallel opens never collide. */
+  private allocatePorts(): Promise<[number, number]> {
+    const next = this.ports.then(async () => {
+      const taken = new Set([...this.running.values()].flatMap((r) => [r.editorPort, r.appPort]));
+      const editorPort = await freePort(4810, taken);
+      taken.add(editorPort);
+      return [editorPort, await freePort(3010, taken)] as [number, number];
+    });
+    this.ports = next.catch(() => {});
+    return next;
+  }
+
+  private async start(dir: string): Promise<Running> {
+    if (!fs.existsSync(path.join(dir, "package.json"))) throw new Error(`${dir} isn't there anymore (or has no package.json).`);
+    const [editorPort, appPort] = await this.allocatePorts();
     const proc = spawn(process.execPath, [this.cli, "dev", "--no-open", "--port", String(editorPort), "--app", `http://localhost:${appPort}`], {
       cwd: dir,
-      env: { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? ""}`, FORCE_COLOR: "0", TRUECANVAS_HUB: "1" },
+      env: toolEnv({ FORCE_COLOR: "0", TRUECANVAS_HUB: "1" }),
       stdio: ["ignore", "pipe", "pipe"],
+      // its own process group: closing the project also stops the next dev it started
+      detached: process.platform !== "win32",
     });
     const run: Running = { path: dir, editorPort, appPort, proc, status: "starting", log: [], startedAt: Date.now() };
     this.running.set(dir, run);
@@ -60,6 +85,11 @@ export class Runner {
     };
     proc.stdout!.on("data", capture);
     proc.stderr!.on("data", capture);
+    proc.on("error", (err) => {
+      run.status = "failed";
+      run.error = err.message;
+      this.onChange();
+    });
     proc.on("exit", (code) => {
       if (this.running.get(dir) !== run) return;
       if (run.status === "starting" || code) {
@@ -73,7 +103,7 @@ export class Runner {
     const until = Date.now() + 60_000;
     while (Date.now() < until && run.status === "starting") {
       try {
-        const res = await fetch(`http://localhost:${editorPort}/api/state`, { signal: AbortSignal.timeout(1000) });
+        const res = await fetch(`http://127.0.0.1:${editorPort}/api/state`, { signal: AbortSignal.timeout(1000) });
         if (res.ok) {
           run.status = "ready";
           break;
@@ -86,23 +116,33 @@ export class Runner {
     if (run.status === "starting") {
       run.status = "failed";
       run.error = "Truecanvas didn't start within a minute.";
+      killTree(run.proc, "SIGTERM");
     }
     this.onChange();
     return run;
   }
 
-  close(dir: string) {
+  /** Stops a project and everything it started; resolves once it has exited (or after 5s). */
+  close(dir: string): Promise<void> {
     const run = this.running.get(dir);
-    if (!run) return;
+    if (!run) return Promise.resolve();
     this.running.delete(dir);
-    run.proc.kill("SIGTERM");
-    // next dev is a grandchild: make sure it goes too
-    setTimeout(() => run.proc.exitCode === null && run.proc.kill("SIGKILL"), 4000).unref();
     this.onChange();
+    if (run.proc.exitCode !== null || run.proc.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const force = setTimeout(() => killTree(run.proc, "SIGKILL"), 4000);
+      const done = setTimeout(resolve, 5000);
+      run.proc.once("exit", () => {
+        clearTimeout(force);
+        clearTimeout(done);
+        resolve();
+      });
+      killTree(run.proc, "SIGTERM");
+    });
   }
 
-  closeAll() {
-    for (const dir of [...this.running.keys()]) this.close(dir);
+  closeAll(): Promise<void> {
+    return Promise.all([...this.running.keys()].map((dir) => this.close(dir))).then(() => {});
   }
 
   /** Resident memory (MB) of each project's process tree. */
@@ -126,6 +166,16 @@ export class Runner {
         resolve(outMap);
       });
     });
+  }
+}
+
+/** Signals a project's whole process group (truecanvas dev, next dev and its workers). */
+function killTree(proc: ChildProcess, signal: NodeJS.Signals) {
+  try {
+    if (process.platform !== "win32" && proc.pid) process.kill(-proc.pid, signal);
+    else proc.kill(signal);
+  } catch {
+    proc.kill(signal);
   }
 }
 
@@ -166,7 +216,7 @@ async function install(job: Job, cmd: string, args: string[], cwd: string) {
 function run(job: Job, cmd: string, args: string[], cwd: string): Promise<void> {
   job.log.push(`$ ${cmd} ${args.join(" ")}`);
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? ""}`, CI: "1", FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(cmd, args, { cwd, env: toolEnv({ CI: "1", FORCE_COLOR: "0" }), stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32" });
     const capture = (c: Buffer) => {
       for (const line of c.toString().split("\n")) if (line.trim()) job.log.push(line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ""));
       if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
@@ -193,11 +243,16 @@ function startJob(title: string, work: (job: Job) => Promise<string | void>): Jo
   return job;
 }
 
-function packageManager(dir: string): { cmd: string; add: string[] } {
-  if (fs.existsSync(path.join(dir, "pnpm-lock.yaml"))) return { cmd: "pnpm", add: ["add", "-D"] };
-  if (fs.existsSync(path.join(dir, "yarn.lock"))) return { cmd: "yarn", add: ["add", "-D"] };
-  if (fs.existsSync(path.join(dir, "bun.lock")) || fs.existsSync(path.join(dir, "bun.lockb"))) return { cmd: "bun", add: ["add", "-d"] };
-  return { cmd: "npm", add: ["install", "-D"] };
+/** The project's package manager (lockfile here or in a parent workspace), as a command. */
+function packageManager(dir: string): { cmd: Pm; add: string[] } {
+  const pm = detectPm(dir);
+  return { cmd: pm, add: addArgs(pm, [], true) };
+}
+
+/** pnpm when it's installed (fast, small), else npm, which comes with Node. */
+async function preferredPm(): Promise<Pm> {
+  const { ok } = await capture("pnpm", ["--version"], os.homedir());
+  return ok ? "pnpm" : "npm";
 }
 
 export function setupJob(dir: string, pkgDir: string, cli: string): Job {
@@ -222,9 +277,10 @@ export function createJob(name: string, parent: string, pkgDir: string, cli: str
     if (!safe) throw new Error("Pick a project name.");
     if (fs.existsSync(dir)) throw new Error(`${dir} already exists.`);
     fs.mkdirSync(parentDir, { recursive: true });
-    await run(job, "npx", ["--yes", "create-next-app@latest", safe, "--ts", "--tailwind", "--app", "--eslint", "--no-src-dir", "--import-alias", "@/*", "--use-pnpm", "--turbopack", "--yes"], parentDir);
+    const pm = await preferredPm();
+    await run(job, "npx", ["--yes", "create-next-app@latest", safe, "--ts", "--tailwind", "--app", "--eslint", "--no-src-dir", "--import-alias", "@/*", `--use-${pm}`, "--turbopack", "--yes"], parentDir);
     const source = await packageSpec(pkgDir, (cmd, args, cwd) => run(job, cmd, args, cwd));
-    await install(job, "pnpm", ["add", "-D", source], dir);
+    await install(job, pm, addArgs(pm, [source], true), dir);
     await run(job, process.execPath, [cli, "init"], dir);
     return dir;
   });

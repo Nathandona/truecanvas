@@ -1,5 +1,6 @@
+import { Dialog } from "../components/Dialog";
+import { ago } from "../lib/time";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ChevronRight,
@@ -76,15 +77,19 @@ export function HubApp() {
 
   const [connected, setConnected] = useState(true);
   // background refreshes fail quietly; a dropped event stream means the hub is gone
+  // polling and server events overlap: only the newest request may set the state
+  const latestRefresh = useRef(0);
   const refresh = useCallback(() => {
+    const seq = ++latestRefresh.current;
     call<HubState>("/api/hub/state")
-      .then(setState)
+      .then((s) => seq === latestRefresh.current && setState(s))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     applyTheme();
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", applyTheme);
     refresh();
     const es = new EventSource("/api/hub/events");
     es.onmessage = () => refresh();
@@ -95,6 +100,7 @@ export function HubApp() {
     es.onerror = () => setConnected(false);
     const poll = setInterval(refresh, 5000); // memory figures
     return () => {
+      scheme.removeEventListener("change", applyTheme);
       es.close();
       clearInterval(poll);
     };
@@ -102,10 +108,13 @@ export function HubApp() {
 
   const open = useMemo(() => (state?.projects ?? []).filter((p) => p.running), [state]);
 
+  // a project being opened has its tab selected before it shows up as running
+  const opening = useRef<string | null>(null);
   // keep the selected tab valid, and tell the hub which project the agent should use
   useEffect(() => {
     if (!state) return;
-    if (tab !== "dashboard" && !open.some((p) => p.path === tab)) setTab("dashboard");
+    if (open.some((p) => p.path === opening.current)) opening.current = null;
+    if (tab !== "dashboard" && tab !== opening.current && !open.some((p) => p.path === tab)) setTab("dashboard");
   }, [state, open, tab]);
   // tell the hub which project agents should act on, only when the tab actually changes
   useEffect(() => {
@@ -127,10 +136,12 @@ export function HubApp() {
   }, [activeName]);
 
   const openProject = async (p: { path: string }) => {
+    opening.current = p.path;
     setTab(p.path);
     try {
       await call("/api/hub/open", { path: p.path });
     } catch (e) {
+      opening.current = null;
       setError((e as Error).message);
     }
     refresh();
@@ -138,7 +149,11 @@ export function HubApp() {
   const closeProject = async (p: Project) => {
     const i = open.findIndex((x) => x.path === p.path);
     if (tab === p.path) setTab(open[i + 1]?.path ?? open[i - 1]?.path ?? "dashboard");
-    await call("/api/hub/close", { path: p.path });
+    try {
+      await call("/api/hub/close", { path: p.path });
+    } catch (err) {
+      setError((err as Error).message);
+    }
     refresh();
   };
 
@@ -307,18 +322,8 @@ function AppMenu({ onQuit }: { onQuit: () => void }) {
 }
 
 function QuitDialog({ running, onCancel, onQuit }: { running: string[]; onCancel: () => void; onQuit: () => void }) {
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-      if (e.key === "Enter") onQuit();
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onCancel, onQuit]);
-  return createPortal(
-    <div className="modal-backdrop" onPointerDown={onCancel}>
-      <div className="modal" onPointerDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">Quit Truecanvas?</div>
+  return (
+    <Dialog title="Quit Truecanvas?" role="alertdialog" width={380} onClose={onCancel}>
         <p className="muted">
           {running.length
             ? `This also stops ${running.length === 1 ? "the app" : "the apps"} it started: ${running.join(", ")}. Your files are saved as you edit.`
@@ -332,9 +337,7 @@ function QuitDialog({ running, onCancel, onQuit }: { running: string[]; onCancel
             Quit
           </button>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }
 
@@ -369,14 +372,6 @@ function ProjectView({ project, visible, onRetry }: { project: Project; visible:
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
-
-function ago(t: number) {
-  const s = (Date.now() - t) / 1000;
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return `${Math.floor(s / 86400)} d ago`;
-}
 
 function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { path: string }) => void; refresh: () => void }) {
   const [found, setFound] = useState<{ path: string; name: string; ready: boolean }[] | null>(null);
@@ -481,7 +476,7 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
                 ) : (
                   <>
                     <span className="faint">
-                      {p.canvases} {p.canvases === 1 ? "page" : "pages"} · {ago(p.lastOpened)}
+                      {p.canvases} {p.canvases === 1 ? "page" : "pages"} · {ago(p.lastOpened, "long")}
                     </span>
                     {p.running && (
                       <span className="live-tag">
@@ -539,9 +534,12 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
         <OpenFolder
           onClose={() => setModal(null)}
           onPick={async (dir) => {
+            // errors (no package.json…) stay in the picker, which shows them
+            const added = await call<{ path: string; ready: boolean }>("/api/hub/add", { path: dir });
             setModal(null);
-            await call("/api/hub/add", { path: dir });
             refresh();
+            // ready to go: open its tab straight away (otherwise the Dashboard offers "Set up")
+            if (added.ready) onOpen({ path: added.path });
           }}
         />
       )}
@@ -589,36 +587,36 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
 }
 
 function Modal({ title, children, onClose, width = 460 }: { title: string; children: React.ReactNode; onClose: () => void; width?: number }) {
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
-  return createPortal(
-    <div className="modal-backdrop" onPointerDown={onClose}>
-      <div className="modal" style={{ width }} onPointerDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">{title}</div>
-        {children}
-      </div>
-    </div>,
-    document.body,
+  return (
+    <Dialog title={title} width={width} onClose={onClose}>
+      {children}
+    </Dialog>
   );
 }
 
-function OpenFolder({ onClose, onPick }: { onClose: () => void; onPick: (dir: string) => void }) {
+function OpenFolder({ onClose, onPick: pickDir }: { onClose: () => void; onPick: (dir: string) => Promise<void> }) {
   const [dir, setDir] = useState("~/Github");
   const [list, setList] = useState<{ path: string; dirs: { name: string; next: boolean }[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const onPick = (dir: string) => void pickDir(dir).catch((e) => setErr((e as Error).message));
+  // which typed path the listing belongs to: Enter must not open a previous folder
+  const [listFor, setListFor] = useState<string | null>(null);
   useEffect(() => {
+    let stale = false;
     const t = setTimeout(() => {
       call<NonNullable<typeof list>>(`/api/hub/ls?path=${encodeURIComponent(dir)}`)
         .then((l) => {
+          if (stale) return;
           setList(l);
+          setListFor(dir);
           setErr(null);
         })
-        .catch((e) => setErr((e as Error).message));
+        .catch((e) => !stale && setErr((e as Error).message));
     }, 150);
-    return () => clearTimeout(t);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
   }, [dir]);
   return (
     <Modal title="Open a project folder" onClose={onClose} width={520}>
@@ -627,7 +625,7 @@ function OpenFolder({ onClose, onPick }: { onClose: () => void; onPick: (dir: st
         <span className="prefix">
           <Folder size={13} />
         </span>
-        <input autoFocus value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onPick(list?.path ?? dir)} spellCheck={false} />
+        <input autoFocus value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onPick(list && listFor === dir ? list.path : dir)} spellCheck={false} />
       </div>
       <div className="dir-list">
         {list && (
@@ -696,7 +694,7 @@ function CloneRepo({ onClose, onClone }: { onClose: () => void; onClone: (repo: 
             {r.isPrivate ? <Lock size={13} className="faint" /> : <CloudDownload size={13} className="faint" />}
             <span style={{ fontWeight: 500 }}>{r.nameWithOwner}</span>
             <span className="faint" style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
-              {ago(Date.parse(r.updatedAt))}
+              {ago(Date.parse(r.updatedAt), "long")}
             </span>
           </button>
         ))}
@@ -751,7 +749,7 @@ function PullRequests({ project, onClose, onOpened }: { project: Project; onClos
               #{pr.number} {pr.title}
             </span>
             <span className="faint" style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
-              {pr.author?.login} · {ago(Date.parse(pr.updatedAt))}
+              {pr.author?.login} · {ago(Date.parse(pr.updatedAt), "long")}
             </span>
           </button>
         ))}
@@ -811,6 +809,13 @@ function JobDialog({ job: initial, onClose }: { job: Job; onClose: (result?: str
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [job.log.length]);
+  // created or cloned: open its tab on its own (a beat later, so "Done." is seen)
+  useEffect(() => {
+    if (job.status !== "done" || !job.result) return;
+    const t = setTimeout(() => onClose(job.result), 700);
+    return () => clearTimeout(t);
+    // onClose is a fresh function each render; the job is what matters
+  }, [job.status, job.result]);
   return (
     <Modal title={job.title} onClose={() => job.status !== "running" && onClose()} width={600}>
       <div className="job-status">
@@ -823,7 +828,7 @@ function JobDialog({ job: initial, onClose }: { job: Job; onClose: (result?: str
       <div className="modal-actions">
         {job.status === "done" && job.result ? (
           <button className="btn primary" onClick={() => onClose(job.result)}>
-            Open project
+            Opening…
           </button>
         ) : (
           <button className="btn outline" disabled={job.status === "running"} onClick={() => onClose()}>

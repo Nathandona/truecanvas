@@ -1,18 +1,19 @@
 import { useEffect } from "react";
 import { AlertCircle, LoaderCircle, RefreshCw } from "lucide-react";
 import { api, subscribe, type ServerEvent } from "./lib/api";
-import { useStore } from "./lib/store";
+import { useStore, agentLabel, type Camera } from "./lib/store";
 import { refreshRects } from "./lib/bridge";
-import { applyUiTheme, setCamera, zoomToFit, zoomToSelection } from "./lib/actions";
+import { applyUiTheme, cachedHeights, cameraShowsFrames, revealOnCanvas, setCamera, startAutoFit } from "./lib/actions";
 import { CanvasView } from "./components/Canvas";
 import { LeftPanel } from "./components/LeftPanel";
-import { RightPanel, agentLabel } from "./components/RightPanel";
+import { RightPanel } from "./components/RightPanel";
 import { agentColor, loadLayerFlags } from "./lib/store";
 import { loadComments, loadGit, loadPr, markDesignChanged } from "./lib/sync";
 import { Toolbar } from "./components/Toolbar";
 import { CompareBar } from "./components/Compare";
 import { ReviewSheet } from "./components/GitPanel";
 import { ComponentDialog } from "./components/ComponentDialog";
+import { LibrariesDialog } from "./components/LibrariesDialog";
 import { fromServer } from "./lib/scope";
 
 let flashSeq = 0;
@@ -56,7 +57,12 @@ export function App() {
     const prPoll = setInterval(() => loadPr(), 60000);
     const onFocus = () => loadGit(0);
     window.addEventListener("focus", onFocus);
-    const off = subscribe(onEvent, (c) => useStore.setState({ connected: c }));
+    const off = subscribe(
+      onEvent,
+      (c) => useStore.setState({ connected: c }),
+      // the server restarted or the connection dropped: catch up on what was missed
+      () => void resync(),
+    );
     return () => {
       off();
       media.removeEventListener("change", applyUiTheme);
@@ -76,16 +82,31 @@ export function App() {
     history.replaceState(null, "", url);
     const prevCompare = useStore.getState().compare;
     if (prevCompare) void api.clearCompare().catch(() => {});
-    useStore.setState({ selection: [], hover: null, rects: {}, frameReady: {}, frameErrors: {}, frameHeights: {}, layerQuery: "", compare: null, threads: [], openThread: null, draftComment: null });
+    useStore.setState({ selection: [], hover: null, rects: {}, frameReady: {}, frameErrors: {}, frameHeights: cachedHeights(canvas), layerQuery: "", compare: null, threads: [], openThread: null, draftComment: null });
     loadLayerFlags(canvas);
     loadComments();
-    void api.canvas(canvas).then(({ doc, history }) => {
-      useStore.getState().setDoc(doc);
-      useStore.setState({ history, expanded: new Set(doc.frames.map((f) => f.id)) });
-      const cam = localStorage.getItem(`tc:camera:${canvas}`);
-      if (cam) setCamera(JSON.parse(cam));
-      else requestAnimationFrame(zoomToFit);
-    });
+    // switching again before this answers: the old canvas must not land on the new one
+    let stale = false;
+    api
+      .canvas(canvas)
+      .then(({ doc, history }) => {
+        if (stale) return;
+        useStore.getState().setDoc(doc);
+        useStore.setState({ history, expanded: new Set(doc.frames.map((f) => f.id)) });
+        // the saved camera, unless it would open on empty space: then show the whole canvas
+        let cam: Camera | null = null;
+        try {
+          cam = JSON.parse(localStorage.getItem(`tc:camera:${canvas}`) ?? "null") as Camera | null;
+        } catch {
+          cam = null;
+        }
+        if (cam && cameraShowsFrames(cam, doc.frames)) setCamera(cam);
+        else requestAnimationFrame(startAutoFit);
+      })
+      .catch((err) => !stale && useStore.getState().toast((err as Error).message));
+    return () => {
+      stale = true;
+    };
   }, [canvas]);
 
   // is the Next.js app reachable?
@@ -137,6 +158,7 @@ export function App() {
         <CompareBar />
         <ReviewSheet />
         <ComponentDialog />
+        <LibrariesDialog />
         <Toolbar />
         {appStatus === "down" && (
           <div className="banner" role="status">
@@ -210,6 +232,26 @@ function loadComponents() {
     .catch(() => {});
 }
 
+/** Reloads everything server-side after a reconnect: events sent meanwhile are lost. */
+async function resync() {
+  const s = useStore.getState();
+  try {
+    const state = await api.state();
+    useStore.setState({ canvases: state.canvases, agents: state.agents, feed: state.feed });
+    if (s.canvas && state.canvases.includes(s.canvas)) {
+      const { doc, history } = await api.canvas(s.canvas);
+      useStore.getState().setDoc(doc);
+      useStore.setState({ history });
+    }
+  } catch {
+    return;
+  }
+  loadComponents();
+  loadPages();
+  loadComments();
+  loadGit(0);
+}
+
 function onEvent(e: ServerEvent) {
   const s = useStore.getState();
   switch (e.type) {
@@ -259,7 +301,12 @@ function onEvent(e: ServerEvent) {
       break;
     }
     case "presence": {
-      useStore.setState({ presence: { ...s.presence, [e.presence.session]: { ...e.presence, ids: e.presence.ids.map((id) => fromServer(s.index, id)) } } });
+      // text has no box of its own: point at (and measure) the element around it
+      const toElement = (id: string) => {
+        const entry = s.index.get(id);
+        return entry && entry.node.kind === "text" && entry.parent ? entry.parent.id : id;
+      };
+      useStore.setState({ presence: { ...s.presence, [e.presence.session]: { ...e.presence, ids: e.presence.ids.map((id) => toElement(fromServer(s.index, id))) } } });
       // edits re-render the frame through HMR first; measure the targets after
       void refreshRects();
       setTimeout(() => void refreshRects(), 400);
@@ -285,14 +332,8 @@ function onEvent(e: ServerEvent) {
       void import("./lib/actions").then((a) => (e.action === "replay" ? a.replayFrame(e.frame) : a.playFrame(e.action === "play" ? e.frame : null)));
       break;
     }
-    case "focus": {
-      if (e.canvas !== s.canvas) useStore.setState({ canvas: e.canvas });
-      setTimeout(() => {
-        const index = useStore.getState().index;
-        useStore.getState().select(e.ids.map((id) => fromServer(index, id)));
-        void refreshRects().then(() => zoomToSelection());
-      }, e.canvas !== s.canvas ? 600 : 0);
+    case "focus":
+      revealOnCanvas(e.canvas, e.ids);
       break;
-    }
   }
 }

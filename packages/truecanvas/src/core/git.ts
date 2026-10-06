@@ -30,9 +30,18 @@ function run(cmd: string, cwd: string, args: string[], timeout: number, opts: Ru
   });
 }
 
+/**
+ * Refs and branch names come from the editor and agents: they must never be
+ * read as an option (`--output=…`) or carry shell-ish characters.
+ */
+export function safeRef(ref: string): string {
+  if (!ref || ref.startsWith("-") || !/^[\w./~^@{}+-]+$/.test(ref) || ref.includes("..")) throw new GitError(`Invalid git ref "${ref}".`);
+  return ref;
+}
+
 export interface GitFile {
   path: string;
-  status: "modified" | "added" | "deleted" | "renamed" | "untracked";
+  status: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
   staged: boolean;
 }
 
@@ -82,9 +91,12 @@ export class Git {
     } catch {
       return { repo: false, root: null, branch: null, unborn: false, upstream: null, ahead: 0, behind: 0, files: [], user: null, defaultBranch: null, remote: null };
     }
-    const out = await git(this.cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "--", "."]);
+    // -z: NUL-separated and unquoted, so paths with spaces or accents come back as-is
+    const out = await git(this.cwd, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."]);
     const s: GitStatus = { repo: true, root, branch: null, unborn: false, upstream: null, ahead: 0, behind: 0, files: [], user: null, defaultBranch: null, remote: null };
-    for (const line of out.split("\n")) {
+    const entries = out.split("\0");
+    for (let i = 0; i < entries.length; i++) {
+      const line = entries[i];
       if (line.startsWith("# branch.head ")) s.branch = line.slice(14) === "(detached)" ? null : line.slice(14);
       else if (line.startsWith("# branch.oid ")) s.unborn = line.slice(13) === "(initial)";
       else if (line.startsWith("# branch.upstream ")) s.upstream = line.slice(18);
@@ -94,9 +106,13 @@ export class Git {
       } else if (line.startsWith("1 ") || line.startsWith("2 ")) {
         const parts = line.split(" ");
         const xy = parts[1];
-        const file = line.startsWith("2 ") ? line.split("\t")[0].split(" ").slice(9).join(" ") : parts.slice(8).join(" ");
+        // "2" (renamed/copied) has one more field, and the original path follows as its own entry
+        const file = parts.slice(line.startsWith("2 ") ? 9 : 8).join(" ");
+        if (line.startsWith("2 ")) i++;
         const code = xy.replace(".", "")[0] ?? "M";
         s.files.push({ path: this.rel(root, file), status: code === "A" ? "added" : code === "D" ? "deleted" : code === "R" ? "renamed" : "modified", staged: xy[0] !== "." });
+      } else if (line.startsWith("u ")) {
+        s.files.push({ path: this.rel(root, line.split(" ").slice(10).join(" ")), status: "conflicted", staged: false });
       } else if (line.startsWith("? ")) s.files.push({ path: this.rel(root, line.slice(2)), status: "untracked", staged: false });
     }
     s.user = (await git(this.cwd, ["config", "user.name"]).catch(() => "")).trim() || null;
@@ -121,12 +137,13 @@ export class Git {
 
   /** When a commit was made (ms). */
   async commitAt(ref: string): Promise<number> {
-    const out = await git(this.cwd, ["log", "-1", "--format=%ct", ref]).catch(() => "");
+    const out = await git(this.cwd, ["log", "-1", "--format=%ct", safeRef(ref), "--"]).catch(() => "");
     return Number(out.trim() || 0) * 1000;
   }
 
   /** Commit where this branch left `base`. */
   async mergeBase(base: string): Promise<string | null> {
+    safeRef(base);
     for (const ref of [`origin/${base}`, base]) {
       const out = await git(this.cwd, ["merge-base", ref, "HEAD"]).catch(() => "");
       if (out.trim()) return out.trim();
@@ -136,7 +153,7 @@ export class Git {
 
   /** Files changed between a commit and HEAD, from the project root. */
   async changedSince(ref: string): Promise<string[]> {
-    const out = await git(this.cwd, ["diff", "--name-only", "--relative", `${ref}...HEAD`]).catch(() => "");
+    const out = await git(this.cwd, ["diff", "--name-only", "--relative", `${safeRef(ref)}...HEAD`, "--"]).catch(() => "");
     return out.split("\n").filter(Boolean);
   }
 
@@ -155,6 +172,7 @@ export class Git {
    * (used for PR screenshots), and pushes it. Returns the branch tip.
    */
   async commitToSideBranch(branch: string, files: { path: string; data: Buffer }[], message: string): Promise<void> {
+    safeRef(branch);
     const tip = (await git(this.cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).catch(() => "")).trim() || (await git(this.cwd, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]).catch(() => "")).trim();
     const os = await import("node:os");
     const fs = await import("node:fs");
@@ -208,7 +226,7 @@ export class Git {
   }
 
   async createPullRequest(opts: { title: string; body: string; base: string; draft?: boolean }): Promise<string> {
-    const out = await run("gh", this.cwd, ["pr", "create", "--title", opts.title, "--body-file", "-", "--base", opts.base, ...(opts.draft ? ["--draft"] : [])], 120_000, { input: opts.body });
+    const out = await run("gh", this.cwd, ["pr", "create", "--title", opts.title, "--body-file", "-", "--base", safeRef(opts.base), ...(opts.draft ? ["--draft"] : [])], 120_000, { input: opts.body });
     return out.trim().split("\n").pop() ?? "";
   }
 
@@ -259,7 +277,7 @@ export class Git {
   async show(ref: string, file: string): Promise<string | null> {
     const root = (await git(this.cwd, ["rev-parse", "--show-toplevel"])).trim();
     const inRepo = path.relative(root, path.join(this.cwd, file)).split(path.sep).join("/");
-    return git(this.cwd, ["show", `${ref}:${inRepo}`]).catch(() => null);
+    return git(this.cwd, ["show", `${safeRef(ref)}:${inRepo}`, "--"]).catch(() => null);
   }
 
   async commit(message: string, files: string[]): Promise<string> {
@@ -285,7 +303,7 @@ export class Git {
   }
 
   async switch(branch: string, create = false): Promise<void> {
-    if (!/^[\w./-]+$/.test(branch) || branch.startsWith("-")) throw new GitError("Invalid branch name.");
+    safeRef(branch);
     await git(this.cwd, create ? ["switch", "-c", branch] : ["switch", branch]);
   }
 }

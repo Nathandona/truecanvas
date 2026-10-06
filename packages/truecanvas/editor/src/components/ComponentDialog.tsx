@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { createPortal } from "react-dom";
 import { Component, LoaderCircle } from "lucide-react";
 import { layerName, useStore } from "../lib/store";
 import { insertionPoint } from "../lib/actions";
 import { editComponent } from "../lib/elements";
+import { Dialog } from "./Dialog";
 
 const pascal = (s: string) =>
   s
@@ -34,7 +34,7 @@ export function ComponentDialog() {
   const entry = useStore((s) => (dialog?.from ? s.index.get(dialog.from) : null));
   const dir = useStore((s) => s.componentsDir);
   if (!dialog) return null;
-  return <Dialog key={dialog.from ?? "new"} from={dialog.from} suggestion={entry ? suggestName(entry.node) : ""} dir={dir} />;
+  return <ComponentForm key={dialog.from ?? "new"} from={dialog.from} suggestion={entry ? suggestName(entry.node) : ""} dir={dir} />;
 }
 
 function suggestName(n: Parameters<typeof layerName>[0]) {
@@ -43,7 +43,7 @@ function suggestName(n: Parameters<typeof layerName>[0]) {
   return /^[A-Z]/.test(base) ? base : "";
 }
 
-function Dialog({ from, suggestion, dir }: { from: string | null; suggestion: string; dir: string }) {
+function ComponentForm({ from, suggestion, dir }: { from: string | null; suggestion: string; dir: string }) {
   const [name, setName] = useState(suggestion);
   const [busy, setBusy] = useState(false);
   const close = () => useStore.setState({ componentDialog: null });
@@ -61,10 +61,8 @@ function Dialog({ from, suggestion, dir }: { from: string | null; suggestion: st
     close();
     s.toast(from ? `${clean} is a component now. Its instance replaced the layers.` : `Created ${clean}.`, "info", { label: "Edit main component", run: () => void editComponent(clean) });
   };
-  return createPortal(
-    <div className="modal-backdrop" onPointerDown={() => !busy && close()}>
-      <div className="modal" style={{ width: 420 }} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => (e.stopPropagation(), e.key === "Escape" && !busy && close())}>
-        <div className="modal-title">{from ? "Create component" : "New component"}</div>
+  return (
+    <Dialog title={from ? "Create component" : "New component"} width={420} busy={busy} onClose={close}>
         <p className="muted">
           {from ? "The selected layers move into a new component file and are replaced by an instance of it. Their imports come along." : "A new component file with a starter design. Edit it on the canvas, or ask your agent."}
         </p>
@@ -102,8 +100,6 @@ function Dialog({ from, suggestion, dir }: { from: string | null; suggestion: st
             {busy && <LoaderCircle size={13} className="spin-working" />} {from ? "Create component" : "Create"}
           </button>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }

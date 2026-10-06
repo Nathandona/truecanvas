@@ -518,7 +518,10 @@ function startBridge({ frame, setTheme, replay }: { frame: string | null; setThe
   const onKey = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-    if (e.key === "Escape" || e.metaKey || e.ctrlKey || /^[vhfp]$/i.test(e.key)) {
+    // copying, cutting or selecting text in the app is the app's business
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && /^[cxa]$/i.test(e.key) && (window.getSelection()?.toString() || e.key.toLowerCase() === "a")) return;
+    if (e.key === "Escape" || mod || /^[vhfp]$/i.test(e.key)) {
       post({ type: "tc:key", key: e.key, code: e.code, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey });
     }
   };

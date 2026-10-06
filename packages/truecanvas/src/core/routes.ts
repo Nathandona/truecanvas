@@ -3,6 +3,7 @@ import path from "node:path";
 import { defaultReturn } from "./source.js";
 import { importSpecifier } from "./catalog.js";
 import type { TruecanvasConfig } from "./config.js";
+import { rewriteImportSource } from "./ast.js";
 
 export interface AppRoute {
   /** URL path, e.g. "/" or "/pricing" */
@@ -58,7 +59,7 @@ function extract(file: string, canvasFile: string, config: TruecanvasConfig, lay
     // relative imports must be re-pointed from the canvas file
     const from = repoint(config, src, file, canvasFile);
     const text = source.slice(stmt.start!, stmt.end!);
-    imports.push(from === src ? text : text.replace(JSON.stringify(src), JSON.stringify(from)).replace(`'${src}'`, `'${from}'`));
+    imports.push(from === src ? text : rewriteImportSource(text, src, from));
   }
   return { jsx: source.slice(info.node.start!, info.node.end!), imports };
 }
@@ -124,7 +125,9 @@ export function routeFrame(config: TruecanvasConfig, pageFile: string, canvasFil
     const layout = extract(file, canvasAbs, config, true);
     const holes = layout ? (layout.jsx.match(/\{\s*children\s*\}/g) ?? []).length : 0;
     if (layout && holes === 1) {
-      jsx = layout.jsx.replace(/\{\s*children\s*\}/, jsx.startsWith("<>") ? jsx.slice(2, -3) : jsx);
+      const inner = jsx.startsWith("<>") ? jsx.slice(2, -3) : jsx;
+      // a function replacer: `$` in the page's text must stay literal
+      jsx = layout.jsx.replace(/\{\s*children\s*\}/, () => inner);
       imports.push(...layout.imports);
     } else {
       const local = `RouteLayout${i++ || ""}`;

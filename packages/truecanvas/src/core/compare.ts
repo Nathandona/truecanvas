@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TruecanvasConfig } from "./config.js";
 import { parseCanvas } from "./parse.js";
-import { syncRoute } from "./scaffold.js";
+import { assertCanvasName, syncRoute } from "./scaffold.js";
 import { importSpecifier } from "./catalog.js";
+import { rewriteImportSource } from "./ast.js";
 
 export const COMPARE_PREFIX = "__compare__";
 
@@ -47,13 +48,14 @@ function rewriteImports(source: string, map: (spec: string) => string): string {
   for (const imp of [...doc.imports].sort((a, b) => b.start - a.start)) {
     const next = map(imp.source);
     if (next === imp.source) continue;
-    const stmt = out.slice(imp.start, imp.end).replace(JSON.stringify(imp.source), JSON.stringify(next)).replace(`'${imp.source}'`, `'${next}'`);
+    const stmt = rewriteImportSource(out.slice(imp.start, imp.end), imp.source, next);
     out = out.slice(0, imp.start) + stmt + out.slice(imp.end);
   }
   return out;
 }
 
 export function clearCompare(config: TruecanvasConfig, canvas?: string) {
+  if (canvas) assertCanvasName(canvas);
   const dir = path.join(config.root, config.appDir, "truecanvas", "compare");
   if (!fs.existsSync(dir)) return;
   for (const f of fs.readdirSync(dir)) if (!canvas || f === `${canvas}.canvas.tsx` || f.startsWith(`${canvas}--`)) fs.rmSync(path.join(dir, f));

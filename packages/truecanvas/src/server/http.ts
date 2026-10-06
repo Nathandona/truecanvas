@@ -8,7 +8,6 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import launchEditor from "launch-editor";
 import { Workspace, type Command, type WorkspaceEvent } from "../core/workspace.js";
 import { EditError } from "../core/edit.js";
-import { findNode } from "../core/parse.js";
 import { createMcpServer } from "./mcp.js";
 import { readTokenData } from "../core/tokens.js";
 import { layoutFiles, listRoutes } from "../core/routes.js";
@@ -20,6 +19,10 @@ import { Screenshotter } from "./screenshot.js";
 import { componentsDir } from "../core/components.js";
 import { prDesignSection, renderFrame, reviewAll, reviewPage, type PageReview, type PrImage } from "./review.js";
 import type { PullRequest } from "../core/git.js";
+import { readJson } from "./body.js";
+import { addShadcnComponents, installIconLibrary, libraryState, shadcnRegistry } from "../core/libraries.js";
+import { loadIcons, searchIcons } from "../core/icons.js";
+import { shadcnStatus } from "../core/shadcn.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -317,6 +320,29 @@ export async function startServer(ws: Workspace) {
         return json(res, 200, readTokenData(config.root));
       case "GET /api/components":
         return json(res, 200, { components: await ws.catalog.load() });
+      // ---------- libraries: icon sets and shadcn/ui ----------
+      case "GET /api/libraries":
+        return json(res, 200, libraryState(config.root));
+      case "GET /api/libraries/shadcn":
+        return json(res, 200, { ...(await shadcnRegistry()), status: shadcnStatus(config.root) });
+      case "GET /api/icons": {
+        const icons = await loadIcons(config.root, url.searchParams.get("library") ?? "");
+        const limit = Math.min(Number(url.searchParams.get("limit")) || 240, 1000);
+        return json(res, 200, searchIcons(icons, url.searchParams.get("q") ?? "", limit));
+      }
+      case "POST /api/libraries/icons": {
+        const { id } = (await readJson(req)) as { id: string };
+        const out = await installIconLibrary(config.root, id);
+        return json(res, 200, { ...out, out: out.out.slice(-4000), state: libraryState(config.root) });
+      }
+      case "POST /api/libraries/shadcn": {
+        const { names } = (await readJson(req)) as { names: string[] };
+        const out = await addShadcnComponents(config.root, Array.isArray(names) ? names.map(String) : []);
+        // new files in components/ui: the catalog picks them up
+        ws.catalog.invalidate();
+        broadcast({ type: "catalog" });
+        return json(res, 200, { ...out, out: out.out.slice(-4000), state: libraryState(config.root) });
+      }
       case "GET /api/events": {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
         res.write(": connected\n\n");
@@ -392,7 +418,7 @@ export async function startServer(ws: Workspace) {
   // ---------- static editor ----------
   function serveStatic(res: http.ServerResponse, pathname: string) {
     let file = path.join(editorDir, pathname === "/" ? "index.html" : pathname);
-    if (!file.startsWith(editorDir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(editorDir, "index.html");
+    if (!inside(editorDir, file) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(editorDir, "index.html");
     if (!fs.existsSync(file)) {
       res.writeHead(500, { "content-type": "text/plain" });
       return res.end("Editor bundle missing. Run `pnpm build` in packages/truecanvas.");
@@ -400,7 +426,7 @@ export async function startServer(ws: Workspace) {
     const ext = path.extname(file);
     const immutable = pathname.startsWith("/assets/");
     res.writeHead(200, { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": immutable ? "public, max-age=31536000, immutable" : "no-cache" });
-    fs.createReadStream(file).pipe(res);
+    fs.createReadStream(file).on("error", () => res.destroy()).pipe(res);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -426,7 +452,7 @@ export async function startServer(ws: Workspace) {
   const canvasDir = path.join(config.root, config.canvasDir);
   fs.mkdirSync(canvasDir, { recursive: true });
   const pending = new Map<string, NodeJS.Timeout>();
-  fs.watch(canvasDir, (_event, filename) => {
+  const onCanvasFile = (filename: string | null) => {
     if (!filename) return;
     if (filename.endsWith(".comments.json")) {
       ws.commentsChanged(filename.slice(0, -".comments.json".length));
@@ -443,12 +469,38 @@ export async function startServer(ws: Workspace) {
         }
       }, 60),
     );
-  });
+  };
+  // The folder can disappear and come back (switching to a branch without it):
+  // a watcher on the old folder goes silent, so re-watch whenever its inode changes.
+  let canvasWatcher: fs.FSWatcher | null = null;
+  let watchedIno: number | null = null;
+  const watchCanvasDir = () => {
+    let ino: number | null = null;
+    try {
+      ino = fs.statSync(canvasDir).ino;
+    } catch {
+      ino = null;
+    }
+    if (ino === watchedIno && canvasWatcher) return;
+    canvasWatcher?.close();
+    canvasWatcher = null;
+    watchedIno = ino;
+    if (ino === null) return;
+    canvasWatcher = fs.watch(canvasDir, (_event, filename) => onCanvasFile(filename));
+    canvasWatcher.on("error", () => {
+      canvasWatcher?.close();
+      canvasWatcher = null;
+    });
+    // pick up whatever the new folder holds
+    for (const f of fs.readdirSync(canvasDir)) onCanvasFile(f);
+  };
+  watchCanvasDir();
+  setInterval(watchCanvasDir, 2000).unref();
   // pages and layouts: linked frames follow edits made in a code editor (or by git)
   const appDirAbs = path.join(config.root, config.appDir);
   if (fs.existsSync(appDirAbs)) {
     const appPending = new Map<string, NodeJS.Timeout>();
-    fs.watch(appDirAbs, { recursive: true }, (_event, filename) => {
+    const appWatcher = fs.watch(appDirAbs, { recursive: true }, (_event, filename) => {
       if (!filename || !/(^|[\\/])(page|layout)\.[jt]sx$/.test(filename) || /^truecanvas[\\/]/.test(filename)) return;
       const rel = path.join(config.appDir, filename).split(path.sep).join("/");
       clearTimeout(appPending.get(rel));
@@ -463,12 +515,13 @@ export async function startServer(ws: Workspace) {
         }, 60),
       );
     });
+    appWatcher.on("error", (err) => console.error(`Stopped watching ${config.appDir}: ${err.message}`));
   }
   let catalogTimer: NodeJS.Timeout | undefined;
   for (const dir of componentRoots(config.components)) {
     const abs = path.join(config.root, dir);
     if (!fs.existsSync(abs)) continue;
-    fs.watch(abs, { recursive: true }, () => {
+    const componentWatcher = fs.watch(abs, { recursive: true }, () => {
       clearTimeout(catalogTimer);
       catalogTimer = setTimeout(() => {
         ws.catalog.invalidate();
@@ -476,6 +529,7 @@ export async function startServer(ws: Workspace) {
         void syncRegistry();
       }, 250);
     });
+    componentWatcher.on("error", (err) => console.error(`Stopped watching ${dir}: ${err.message}`));
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -500,17 +554,6 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > 8 * 1024 * 1024) throw new EditError("Request too large.");
-    chunks.push(chunk as Buffer);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
-}
 
 function dedent(code: string, col: number) {
   const pad = " ".repeat(col);
@@ -518,4 +561,10 @@ function dedent(code: string, col: number) {
     .split("\n")
     .map((l, i) => (i > 0 && l.startsWith(pad) ? l.slice(col) : l))
     .join("\n");
+}
+
+/** `file` is within `dir` (works whether or not `dir` ends with a separator). */
+function inside(dir: string, file: string): boolean {
+  const rel = path.relative(dir, file);
+  return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
 }

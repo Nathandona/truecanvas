@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parseModule, walk, type t } from "./ast.js";
+import { parseModule, walk, type t, rewriteImportSource } from "./ast.js";
 import { importSpecifier } from "./catalog.js";
 import type { TruecanvasConfig } from "./config.js";
 import { EditError, componentNamesIn, indentBlock } from "./edit.js";
@@ -36,6 +36,26 @@ function readSource(config: TruecanvasConfig, rel: string): string | null {
   }
 }
 
+/**
+ * Parsing a page is the expensive part of resolving links, and many canvases
+ * show the same pages: parses are memoized per file and source text, and each
+ * caller gets its own copy (resolution splices layouts and reindexes paths).
+ */
+const parseMemo = new Map<string, { source: string; doc: CanvasDoc | null }>();
+function memoParse(key: string, source: string, parse: () => CanvasDoc | null): CanvasDoc | null {
+  let hit = parseMemo.get(key);
+  if (!hit || hit.source !== source) {
+    hit = { source, doc: parse() };
+    parseMemo.set(key, hit);
+  }
+  return hit.doc && { ...hit.doc, frames: hit.doc.frames.map(cloneTree) };
+}
+
+/** Copies nodes and their children arrays (what resolution changes); props and ranges are shared. */
+function cloneTree<T extends CanvasNode>(n: T): T {
+  return { ...n, children: n.children.map(cloneTree) };
+}
+
 /** Replaces linked frames' layers with the JSX of their page and layouts. Returns a new doc. */
 export function resolveLinks(config: TruecanvasConfig, doc: CanvasDoc): CanvasDoc {
   if (!doc.frames.some((f) => f.page || f.component)) return doc;
@@ -53,7 +73,7 @@ function linkComponent(config: TruecanvasConfig, original: CanvasFrame): CanvasF
   const frame: CanvasFrame = { ...original };
   const { file, name } = splitComponentRef(frame.component!);
   const source = readSource(config, file);
-  const doc = source === null ? null : parseModuleDoc(file, source);
+  const doc = source === null ? null : memoParse(`module:${file}`, source, () => parseModuleDoc(file, source));
   const own = doc?.frames.find((f) => f.frameName === name);
   if (!own) {
     frame.link = { kind: "component", page: file, route: name, files: [], editable: false, reason: source === null ? `${file} doesn't exist anymore.` : `${file} has no exported component ${name} returning JSX.` };
@@ -77,7 +97,7 @@ function linkFrame(config: TruecanvasConfig, original: CanvasFrame): CanvasFrame
   const chain = wrapperChain(original);
   const files: string[] = [];
   let current: CanvasNode[];
-  const pageDoc = parseSourceDoc(page, pageSource, false);
+  const pageDoc = memoParse(`page:${page}`, pageSource, () => parseSourceDoc(page, pageSource, false));
   if (pageDoc) {
     current = flatten(pageDoc.frames[0].children[0]);
     files.push(page);
@@ -88,7 +108,7 @@ function linkFrame(config: TruecanvasConfig, original: CanvasFrame): CanvasFrame
   const layouts = layoutFiles(config, page);
   layouts.forEach((rel, i) => {
     const src = readSource(config, rel);
-    const ldoc = src === null ? null : parseSourceDoc(rel, src, true);
+    const ldoc = src === null ? null : memoParse(`layout:${rel}`, src, () => parseSourceDoc(rel, src, true));
     const root = ldoc?.frames[0].children[0];
     const slot = root && findSlot(root);
     if (root && slot) {
@@ -199,7 +219,7 @@ export function explorationBody(config: TruecanvasConfig, frame: CanvasFrame, ca
       const src = stmt.source.value;
       const from = repoint(config, src, pageAbs, path.join(config.root, canvasRel));
       const text = source.slice(stmt.start!, stmt.end!);
-      imports.push(from === src ? text : text.replace(JSON.stringify(src), JSON.stringify(from)).replace(`'${src}'`, `'${from}'`));
+      imports.push(from === src ? text : rewriteImportSource(text, src, from));
     }
     jsx = unwrapFragment(source.slice(info.node.start!, info.node.end!));
   } else {

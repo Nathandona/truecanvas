@@ -15,3 +15,8 @@ export type { Device } from "./devices.js";
 export { frameChanges, writeCompare } from "./compare.js";
 export { Comments } from "./comments.js";
 export { Git } from "./git.js";
+export { ICON_LIBRARIES, iconLibraries, iconLibrary, loadIcons, searchIcons } from "./icons.js";
+export type { Icon, IconLibrary } from "./icons.js";
+export { shadcnStatus, shadcnRegistry, shadcnAdd, shadcnInit } from "./shadcn.js";
+export type { ShadcnStatus } from "./shadcn.js";
+export { initProject, wrapConfigExport } from "./init.js";

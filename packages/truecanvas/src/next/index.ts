@@ -10,8 +10,29 @@ import type { NextConfig } from "next";
  * back to code.
  * In production builds the config is returned untouched.
  */
-export function withTruecanvas(config: NextConfig = {}): NextConfig {
-  if (process.env.NODE_ENV === "production") return config;
+type NextConfigFn = (phase: string, ctx: { defaultConfig: NextConfig }) => NextConfig | Promise<NextConfig>;
+
+/** `next build` / `next start`, even when NODE_ENV=development is exported in the shell. */
+function productionCommand() {
+  return process.env.NODE_ENV === "production" || process.argv.slice(2).some((a) => a === "build" || a === "start" || a === "export");
+}
+
+export function withTruecanvas(config: NextConfig): NextConfig;
+export function withTruecanvas(config: NextConfigFn): NextConfigFn;
+export function withTruecanvas(config?: NextConfig | NextConfigFn): NextConfig | NextConfigFn;
+export function withTruecanvas(config: NextConfig | NextConfigFn = {}): NextConfig | NextConfigFn {
+  // next.config exported as a function: wrap what it returns, only for the dev server
+  if (typeof config === "function") {
+    return async (phase, ctx) => {
+      const resolved = await config(phase, ctx);
+      return phase === "phase-development-server" ? withTruecanvasObject(resolved) : resolved;
+    };
+  }
+  return withTruecanvasObject(config);
+}
+
+function withTruecanvasObject(config: NextConfig): NextConfig {
+  if (productionCommand()) return config;
   const loader = fileURLToPath(new URL("./loader.cjs", import.meta.url));
   warnIfLinkedOutside(loader);
   const userWebpack = config.webpack;

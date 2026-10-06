@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Component, Frame, Hand, Heading1, Heading2, Heading3, Image, LayoutGrid, Link, List, MessageCircle, Minus, Monitor, Moon, MousePointer2, Pause, Play, Plus, Pointer, RectangleHorizontal, Rows3, Columns3, Square, Sun, TextCursorInput, Type, PanelTop } from "lucide-react";
+import { Component, Frame, Hand, Heading1, Heading2, Heading3, Image, LayoutGrid, Link, List, MessageCircle, Minus, Monitor, Moon, MousePointer2, Pause, Play, Plus, Pointer, RectangleHorizontal, Rows3, Columns3, Square, Sun, TextCursorInput, Type, PanelTop, Smile, Blocks } from "lucide-react";
 import { useStore, persist, type ThemeMode, type Tool } from "../lib/store";
 import { zoomBy, zoomTo, zoomToFit, zoomToSelection } from "../lib/actions";
 import { Tip } from "./controls";
 import { Menu, type MenuItem } from "./Menu";
 import { ELEMENTS, insertElement } from "../lib/elements";
 import { openComponentDialog } from "./ComponentDialog";
+import { openLibraries } from "./LibrariesDialog";
 
 export const ELEMENT_ICONS: Record<string, React.ReactNode> = {
   text: <Type size={14} />,
@@ -35,7 +36,9 @@ export function insertMenuItems(): (MenuItem | "sep")[] {
     items.push({ label: el.label, icon: ELEMENT_ICONS[el.key], kbd: el.kbd, onSelect: () => void insertElement(el) });
   }
   items.push("sep");
+  items.push({ label: "Icon…", icon: <Smile size={14} />, onSelect: () => openLibraries("icons") });
   items.push({ label: "Component…", icon: <Component size={14} />, onSelect: () => useStore.setState({ leftTab: "components" }) });
+  items.push({ label: "shadcn/ui component…", icon: <Blocks size={14} />, onSelect: () => openLibraries("shadcn") });
   items.push({ label: "New component…", icon: <Plus size={14} />, onSelect: () => openComponentDialog(false) });
   return items;
 }

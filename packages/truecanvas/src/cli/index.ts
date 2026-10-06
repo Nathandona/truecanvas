@@ -13,6 +13,7 @@ import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.j
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
+import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 
 const HELP = `truecanvas: design with your real React components
@@ -186,7 +187,9 @@ async function main() {
     // stdout belongs to the MCP protocol: log to stderr only
     console.log = console.error;
     const mcpUrl = `http://localhost:${config.port}/mcp`;
-    const running = await fetch(`http://localhost:${config.port}/api/state`).then((r) => r.ok).catch(() => false);
+    // a project server or the Truecanvas window (hub) already answering on this port
+    const answers = (p: string) => fetch(`http://127.0.0.1:${config.port}${p}`).then((r) => r.ok).catch(() => false);
+    const running = (await answers("/api/state")) || (await answers("/api/hub/state"));
     if (!running) {
       ws.ensureRoute();
       await startServer(ws);
@@ -255,8 +258,11 @@ ${hasAgentConfig(root, config.port) ? `  ${c.dim("Agents")}   connected through 
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    // let next dev finish (it cleans up its own workers), but not forever
+    const nextGone = next && next.exitCode === null ? new Promise((r) => next!.once("exit", r)) : Promise.resolve();
     next?.kill("SIGINT");
-    await shutdown();
+    await Promise.all([shutdown(), Promise.race([nextGone, new Promise((r) => setTimeout(r, 4000))])]);
+    if (next && next.exitCode === null) next.kill("SIGKILL");
     process.exit(0);
   };
   process.on("SIGINT", stop);
@@ -382,8 +388,11 @@ async function waitFor(url: string, ms: number) {
 function startNext(root: string, appUrl: string): ChildProcess {
   const port = new URL(appUrl).port || "3000";
   const bin = path.join(root, "node_modules", ".bin", "next");
-  const [cmd, args] = fs.existsSync(bin) ? [bin, ["dev", "-p", port]] : ["npx", ["next", "dev", "-p", port]];
-  const child = spawn(cmd, args, { cwd: root, env: { ...process.env, ...(process.env.NO_COLOR ? {} : { FORCE_COLOR: "1" }) }, stdio: ["ignore", "pipe", "pipe"] });
+  // 127.0.0.1: the dev app (and its /truecanvas routes) stays off the local network
+  const devArgs = ["dev", "-p", port, "-H", "127.0.0.1"];
+  const [cmd, args] = fs.existsSync(bin) ? [bin, devArgs] : ["npx", ["next", ...devArgs]];
+  const child = spawn(cmd, args, { cwd: root, env: toolEnv(process.env.NO_COLOR ? {} : { FORCE_COLOR: "1" }), stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32" });
+  child.on("error", (err) => console.error(`  ${c.dim("next │")} couldn't start next dev: ${err.message}`));
   const prefix = c.dim("next │ ");
   for (const stream of [child.stdout!, child.stderr!]) {
     let buf = "";

@@ -1,3 +1,4 @@
+import { refitIfAuto, rememberHeights } from "./actions";
 import { useStore, type Rect } from "./store";
 import { inFrame, rawId } from "./scope";
 
@@ -17,6 +18,17 @@ export function registerFrame(name: string, el: HTMLIFrameElement | null) {
   else frames.delete(name);
 }
 
+/**
+ * A frame's iframe went away (scrolled far off-screen): it must say "ready"
+ * again when it comes back, so theme, motion and hidden layers are re-sent.
+ */
+export function forgetFrameReady(name: string) {
+  const { frameReady } = useStore.getState();
+  if (!frameReady[name]) return;
+  const { [name]: _gone, ...rest } = frameReady;
+  useStore.setState({ frameReady: rest });
+}
+
 export function onFrameWheel(fn: WheelHandler) {
   wheelHandler = fn;
 }
@@ -29,10 +41,19 @@ function frameNameOf(source: MessageEventSource | null): string | null {
   return null;
 }
 
+/** The app's origin (frames are pages of the user's app), or null before the state has loaded. */
+function appOrigin(): string | null {
+  try {
+    return new URL(useStore.getState().appUrl).origin;
+  } catch {
+    return null;
+  }
+}
+
 function target(name: string) {
   const el = frames.get(name);
-  const origin = useStore.getState().appUrl;
-  return el?.contentWindow ? { win: el.contentWindow, origin: new URL(origin).origin, el } : null;
+  const origin = appOrigin();
+  return el?.contentWindow && origin ? { win: el.contentWindow, origin, el } : null;
 }
 
 export function request<T extends Record<string, unknown>>(frame: string, msg: Record<string, unknown>, timeout = 1500): Promise<T | null> {
@@ -105,6 +126,8 @@ export function installBridge() {
   window.addEventListener("message", (e) => {
     const msg = e.data as { type?: string; req?: number; [k: string]: unknown };
     if (!msg || typeof msg.type !== "string" || !msg.type.startsWith("tc:")) return;
+    // only our app's pages: a frame navigated elsewhere (interact mode) can't drive the editor
+    if (e.origin !== appOrigin()) return;
     const name = frameNameOf(e.source);
     if (!name) return;
     const store = useStore.getState();
@@ -125,6 +148,8 @@ export function installBridge() {
         const height = msg.height as number;
         if (msg.ready && height && store.frameHeights[name] !== height) {
           useStore.setState({ frameHeights: { ...useStore.getState().frameHeights, [name]: height } });
+          rememberHeights();
+          refitIfAuto();
         }
         if (msg.ready && !store.frameReady[name]) useStore.setState({ frameReady: { ...useStore.getState().frameReady, [name]: true } });
         layoutFrames.add(name);

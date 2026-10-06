@@ -77,6 +77,8 @@ export interface ImportInfo {
   source: string;
   typeOnly: boolean;
   names: string[];
+  /** named value imports, `{ Search as SearchIcon }` → { imported: "Search", local: "SearchIcon" } */
+  bindings: { imported: string; local: string }[];
   defaultName: string | null;
   start: number;
   end: number;
@@ -85,6 +87,8 @@ export interface ImportInfo {
 }
 
 export interface CanvasDoc {
+  /** increases every time a doc is computed: lets clients drop a stale one that arrives late */
+  rev?: number;
   name: string;
   file: string;
   frames: CanvasFrame[];

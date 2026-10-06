@@ -29,6 +29,32 @@ import {
 } from "../lib/classes";
 import { NumberField, Section, Segmented, Select, SliderField, TextField, Tip } from "./controls";
 
+const words = (c: string) => c.split(/\s+/).filter(Boolean);
+let classQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Applies a style edit as a change (classes added and removed) to the node's
+ * class list as it is when the edit runs. Edits run one after another, so two
+ * quick edits to different style groups both land instead of the second one
+ * overwriting the first with a stale class list.
+ */
+function writeClassChange(run: ReturnType<typeof useStore.getState>["run"], canvas: string, id: string, from: string, to: string) {
+  const before = words(from);
+  const after = words(to);
+  const removed = new Set(before.filter((c) => !after.includes(c)));
+  const added = after.filter((c) => !before.includes(c));
+  if (!removed.size && !added.length) return;
+  classQueue = classQueue.then(async () => {
+    const s = useStore.getState();
+    const live = (s.index.get(id) ?? s.index.get(s.selection[0]))?.node;
+    const prop = live?.props.className;
+    const current = prop?.kind === "string" ? words(prop.value) : prop ? null : [];
+    if (!live || current === null) return;
+    const next = [...current.filter((c) => !removed.has(c)), ...added.filter((c) => !current.includes(c))].join(" ");
+    if (next !== current.join(" ")) await run({ op: "set_class", canvas, id: live.id, className: next }, { select: false });
+  }).catch(() => {}); // a failed edit (already reported) must not block the next ones
+}
+
 const TEXT_TAGS = /^(h[1-6]|p|span|a|label|button|li|strong|em|small|blockquote|code|figcaption|dt|dd|th|td)$/;
 
 /** Every Figma-style section for a node whose className we can edit. */
@@ -48,7 +74,7 @@ export function StyleSections({ node, component }: { node: CanvasNode; component
     );
   }
 
-  const write = (next: string) => next.trim() !== className.trim() && run({ op: "set_class", canvas, id: node.id, className: next }, { select: false });
+  const write = (next: string) => writeClassChange(run, canvas, node.id, className, next);
   const hasText = node.kind === "element" && (TEXT_TAGS.test(node.name) || node.children.some((c) => c.kind === "text"));
   const p = { className, write, tokens };
   return (

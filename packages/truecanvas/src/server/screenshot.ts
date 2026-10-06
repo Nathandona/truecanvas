@@ -48,15 +48,40 @@ export class Screenshotter {
       const { chromium } = await import("playwright-core");
       const executablePath = this.executable();
       if (!executablePath) throw new Error("No Chromium found for screenshots. Install Chrome/Chromium or set TRUECANVAS_CHROME.");
-      this.browser = chromium.launch({ executablePath, headless: true, args: ["--disable-gpu", "--disable-dev-shm-usage"] });
-      this.browser.catch(() => (this.browser = null));
+      const launching = chromium.launch({ executablePath, headless: true, args: ["--disable-gpu", "--disable-dev-shm-usage"] });
+      this.browser = launching;
+      launching.then(
+        // a crashed browser is forgotten, so the next screenshot starts a fresh one
+        (b) => b.on("disconnected", () => this.browser === launching && (this.browser = null)),
+        () => this.browser === launching && (this.browser = null),
+      );
     }
     return this.browser;
   }
 
-  private touch() {
+  private busy = 0;
+  private waiting: (() => void)[] = [];
+  /**
+   * Runs one screenshot in its own browser context. At most two run at once
+   * (memory), and the browser only closes once nothing is in flight.
+   */
+  private async withContext<T>(options: Parameters<Browser["newContext"]>[0], fn: (ctx: Awaited<ReturnType<Browser["newContext"]>>) => Promise<T>): Promise<T> {
+    if (this.busy >= 2) await new Promise<void>((r) => this.waiting.push(r));
+    this.busy++;
     if (this.idle) clearTimeout(this.idle);
-    this.idle = setTimeout(() => void this.close(), 60_000);
+    try {
+      const browser = await this.getBrowser();
+      const ctx = await browser.newContext(options);
+      try {
+        return await fn(ctx);
+      } finally {
+        await ctx.close().catch(() => {});
+      }
+    } finally {
+      this.busy--;
+      this.waiting.shift()?.();
+      if (this.busy === 0) this.idle = setTimeout(() => void this.close(), 60_000);
+    }
   }
 
   async close() {
@@ -67,20 +92,14 @@ export class Screenshotter {
 
   /** Screenshot of the [data-tc-frame] element of a page (Assets thumbnails). */
   async element(url: string, viewport: { width: number; height: number }): Promise<Buffer> {
-    const browser = await this.getBrowser();
-    this.touch();
-    const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, colorScheme: "light" });
-    try {
+    return this.withContext({ viewport, deviceScaleFactor: 2, colorScheme: "light" }, async (ctx) => {
       const page = await ctx.newPage();
       await page.goto(`${url}${url.includes("?") ? "&" : "?"}still=1`, { waitUntil: "load", timeout: 30_000 });
       const el = await page.waitForSelector("[data-tc-frame]", { timeout: 20_000 });
       await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => setTimeout(r, 250))));
       await page.waitForFunction(() => (window as unknown as { __tcStill?: boolean }).__tcStill === true, undefined, { timeout: 6_000 }).catch(() => {});
       return await el.screenshot({ type: "png", omitBackground: true });
-    } finally {
-      await ctx.close();
-      this.touch();
-    }
+    });
   }
 
   async frame(opts: {
@@ -96,17 +115,15 @@ export class Screenshotter {
     /** crop hug-height frames to this many px */
     maxHeight?: number;
   }): Promise<Buffer> {
-    const browser = await this.getBrowser();
-    this.touch();
-    const ctx = await browser.newContext({
+    const options = {
       viewport: { width: opts.width, height: opts.height ?? 800 },
       deviceScaleFactor: opts.scale ?? 1,
-      colorScheme: opts.theme === "dark" ? "dark" : "light",
+      colorScheme: (opts.theme === "dark" ? "dark" : "light") as "dark" | "light",
       // device frames: touch input, (hover: none) and mobile viewport rules
       isMobile: !!opts.mobile,
       hasTouch: !!opts.mobile,
-    });
-    try {
+    };
+    return this.withContext(options, async (ctx) => {
       const page = await ctx.newPage();
       const url = `${this.appUrl}/truecanvas/${encodeURIComponent(opts.canvas)}?frame=${encodeURIComponent(opts.frame)}&theme=${opts.theme}&still=1`;
       await page.goto(url, { waitUntil: "load", timeout: 30_000 });
@@ -123,9 +140,6 @@ export class Screenshotter {
       await page.waitForTimeout(150);
       const format = opts.jpeg ? ({ type: "jpeg", quality: 78 } as const) : ({ type: "png" } as const);
       return await page.screenshot(format);
-    } finally {
-      await ctx.close();
-      this.touch();
-    }
+    });
   }
 }

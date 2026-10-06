@@ -11,6 +11,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ProjectStore, discover, listDirs } from "./projects.js";
 import { Runner, capture, cloneJob, createJob, getJob, setupJob } from "./runner.js";
+import { readJson } from "../server/body.js";
+import { EditError } from "../core/edit.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -63,28 +65,62 @@ export async function startHub(opts: { port: number; cli: string }) {
   // ---------- MCP: proxy to the current project ----------
   const toolListeners = new Set<() => void>();
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  const lastUse = new Map<string, number>();
+  // agents that vanish without DELETE: close their sessions (and upstream connections) after an hour idle
+  setInterval(() => {
+    for (const [id, at] of lastUse) {
+      if (Date.now() - at < 60 * 60_000) continue;
+      lastUse.delete(id);
+      void transports.get(id)?.close();
+    }
+  }, 5 * 60_000).unref();
 
   function createProxy() {
     const server = new Server({ name: "truecanvas", version: "0.1.0" }, { capabilities: { tools: { listChanged: true } }, instructions: HUB_INSTRUCTIONS });
     let current: string | null = null; // project chosen by the agent, else the active tab
-    const upstreams = new Map<string, Promise<Client>>();
+    // one connection per running project process: a restarted project gets a fresh one
+    const upstreams = new Map<string, { pid: number | undefined; client: Promise<Client> }>();
     const target = () => current ?? active;
+    const drop = (dir: string) => {
+      const hit = upstreams.get(dir);
+      upstreams.delete(dir);
+      void hit?.client.then((c) => c.close()).catch(() => {});
+    };
     const upstream = (dir: string) => {
       const run = runner.running.get(dir);
       if (!run || run.status !== "ready") return null;
-      let c = upstreams.get(dir);
-      if (!c) {
-        const info = server.getClientVersion();
-        const client = new Client({ name: info?.name ?? "agent", version: info?.version ?? "0.0.0" });
-        c = client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost:${run.editorPort}/mcp`))).then(() => client);
-        c.catch(() => upstreams.delete(dir));
-        upstreams.set(dir, c);
-      }
+      const hit = upstreams.get(dir);
+      if (hit && hit.pid === run.proc.pid) return hit.client;
+      if (hit) drop(dir);
+      const info = server.getClientVersion();
+      const client = new Client({ name: info?.name ?? "agent", version: info?.version ?? "0.0.0" });
+      const c = client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${run.editorPort}/mcp`))).then(() => client);
+      c.catch(() => upstreams.delete(dir));
+      upstreams.set(dir, { pid: run.proc.pid, client: c });
       return c;
+    };
+    /** Runs a call on the project, reconnecting once if its session went away. */
+    const withUpstream = async <T,>(dir: string, fn: (c: Client) => Promise<T>): Promise<T | null> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const up = upstream(dir);
+        if (!up) return null;
+        try {
+          return await fn(await up);
+        } catch (err) {
+          drop(dir);
+          // only a lost session is retried: a timeout may have applied an edit already
+          const lost = /session|not connected|ECONNREFUSED|ECONNRESET|fetch failed|404/i.test((err as Error).message ?? "");
+          if (attempt === 1 || !lost) throw err;
+        }
+      }
+      return null;
     };
     const notify = () => void server.sendToolListChanged().catch(() => {});
     toolListeners.add(notify);
-    server.onclose = () => toolListeners.delete(notify);
+    server.onclose = () => {
+      toolListeners.delete(notify);
+      for (const dir of [...upstreams.keys()]) drop(dir);
+    };
 
     const hubTools: Tool[] = [
       { name: "list_projects", description: "Projects known to the Truecanvas hub, which are open, and which one your tools act on.", inputSchema: { type: "object", properties: {} } },
@@ -97,8 +133,8 @@ export async function startHub(opts: { port: number; cli: string }) {
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       const dir = target();
-      const up = dir ? upstream(dir) : null;
-      const projectTools = up ? (await (await up).listTools()).tools : [];
+      // the hub's own tools stay available even when the project can't answer
+      const projectTools = dir ? ((await withUpstream(dir, (c) => c.listTools()).catch(() => null))?.tools ?? []) : [];
       return { tools: [...hubTools, ...projectTools] };
     });
 
@@ -122,9 +158,10 @@ export async function startHub(opts: { port: number; cli: string }) {
         return text(`✓ ${p.name} is open. Your tools now act on it.`);
       }
       const dir = target();
-      const up = dir ? upstream(dir) : null;
-      if (!up) return text("No project is open. Use list_projects and open_project, or open one in the Truecanvas window.", true);
-      return (await (await up).callTool(req.params)) as never;
+      // screenshots can take a while when Next is still compiling
+      const out = dir ? await withUpstream(dir, (c) => c.callTool(req.params, undefined, { timeout: 180_000 })) : null;
+      if (!out) return text("No project is open. Use list_projects and open_project, or open one in the Truecanvas window.", true);
+      return out as never;
     });
     return server;
   }
@@ -133,11 +170,21 @@ export async function startHub(opts: { port: number; cli: string }) {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const body = req.method === "POST" ? await readJson(req) : undefined;
     let transport = sessionId ? transports.get(sessionId) : undefined;
+    if (sessionId && transport) lastUse.set(sessionId, Date.now());
     if (!transport) {
       if (req.method !== "POST" || !isInitializeRequest(body)) return json(res, 400, { jsonrpc: "2.0", error: { code: -32000, message: "No valid MCP session." }, id: null });
-      const t: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID(), onsessioninitialized: (id) => void transports.set(id, t) });
+      const t: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          transports.set(id, t);
+          lastUse.set(id, Date.now());
+        },
+      });
       t.onclose = () => {
-        if (t.sessionId) transports.delete(t.sessionId);
+        if (t.sessionId) {
+          transports.delete(t.sessionId);
+          lastUse.delete(t.sessionId);
+        }
       };
       await createProxy().connect(t);
       transport = t;
@@ -160,7 +207,7 @@ export async function startHub(opts: { port: number; cli: string }) {
         const icon = findIcon(url.searchParams.get("path") ?? "");
         if (!icon) return json(res, 404, { error: "No icon" });
         res.writeHead(200, { "content-type": ICON_MIME[path.extname(icon)] ?? "application/octet-stream", "cache-control": "private, max-age=300" });
-        return fs.createReadStream(icon).pipe(res);
+        return fs.createReadStream(icon).on("error", () => res.destroy()).pipe(res);
       }
       case "GET /api/hub/ls":
         return json(res, 200, listDirs(url.searchParams.get("path") || "~"));
@@ -175,13 +222,20 @@ export async function startHub(opts: { port: number; cli: string }) {
         if (!fs.existsSync(path.join(dir, "package.json"))) return json(res, 400, { error: "No package.json in that folder. Pick the root of a Next.js app." });
         store.touch(dir);
         broadcast();
-        return json(res, 200, { path: dir });
+        // set up already: the window opens its tab right away
+        return json(res, 200, { path: dir, ready: store.all().find((p) => p.path === dir)?.ready ?? false });
       }
       case "POST /api/hub/open": {
         store.touch(body.path);
         active = body.path;
         if (body.focus) focus = { path: body.path, at: Date.now() };
-        const run = await runner.open(body.path);
+        let run;
+        try {
+          run = await runner.open(body.path);
+        } catch (err) {
+          broadcast();
+          return json(res, 400, { error: (err as Error).message });
+        }
         broadcast();
         return json(res, 200, { status: run.status, editor: `http://localhost:${run.editorPort}`, error: run.error });
       }
@@ -235,8 +289,8 @@ export async function startHub(opts: { port: number; cli: string }) {
       }
       case "POST /api/hub/quit":
         json(res, 200, { ok: true });
-        runner.closeAll();
-        setTimeout(() => process.exit(0), 800);
+        // wait for every project (and its next dev) to exit before leaving
+        void runner.closeAll().finally(() => process.exit(0));
         return;
     }
     const job = /^GET \/api\/hub\/jobs\/(\d+)$/.exec(route);
@@ -253,13 +307,13 @@ export async function startHub(opts: { port: number; cli: string }) {
 
   function serveStatic(res: http.ServerResponse, pathname: string) {
     let file = path.join(editorDir, pathname === "/" ? "hub.html" : pathname);
-    if (!file.startsWith(editorDir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(editorDir, "hub.html");
+    if (!inside(editorDir, file) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(editorDir, "hub.html");
     if (!fs.existsSync(file)) {
       res.writeHead(500, { "content-type": "text/plain" });
       return res.end("Hub bundle missing. Run `pnpm build`.");
     }
     res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream", "cache-control": pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache" });
-    fs.createReadStream(file).pipe(res);
+    fs.createReadStream(file).on("error", () => res.destroy()).pipe(res);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -273,7 +327,7 @@ export async function startHub(opts: { port: number; cli: string }) {
       if (req.method === "GET") return serveStatic(res, url.pathname);
       json(res, 405, { error: "Method not allowed" });
     } catch (err) {
-      if (!res.headersSent) json(res, 500, { error: (err as Error).message });
+      if (!res.headersSent) json(res, err instanceof EditError ? 400 : 500, { error: (err as Error).message });
       else res.end();
     }
   });
@@ -283,11 +337,12 @@ export async function startHub(opts: { port: number; cli: string }) {
     server.listen(opts.port, "127.0.0.1", resolve);
   });
   const shutdown = () => {
-    runner.closeAll();
     server.close();
+    return runner.closeAll();
   };
-  process.on("SIGINT", () => (shutdown(), process.exit(0)));
-  process.on("SIGTERM", () => (shutdown(), process.exit(0)));
+  const exit = () => void shutdown().finally(() => process.exit(0));
+  process.once("SIGINT", exit);
+  process.once("SIGTERM", exit);
   return { origin, shutdown };
 }
 
@@ -328,14 +383,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > 4 * 1024 * 1024) throw new Error("Request too large.");
-    chunks.push(chunk as Buffer);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
+/** `file` is within `dir` (works whether or not `dir` ends with a separator). */
+function inside(dir: string, file: string): boolean {
+  const rel = path.relative(dir, file);
+  return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
 }

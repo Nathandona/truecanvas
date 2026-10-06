@@ -1,3 +1,5 @@
+import { Dialog } from "./Dialog";
+import { ago } from "../lib/time";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -27,14 +29,6 @@ import { loadGit, loadPr, markDesignChanged } from "../lib/sync";
 import { fitBounds, frameHeight } from "../lib/actions";
 import { draftMessage, frameLabels, suggestBranch, titleOf } from "../lib/review";
 import { comparePlacement } from "./Compare";
-
-function ago(t: number) {
-  const s = (Date.now() - t) / 1000;
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
 
 /** Start comparing the current page with a ref (branch, commit, HEAD). */
 export async function startCompare(ref: string, label = ref) {
@@ -520,12 +514,10 @@ function PrDialog({ defaultTitle, onClose }: { defaultTitle: string; onClose: ()
       loadGit(0);
     }
   };
-  return createPortal(
-    <div className="modal-backdrop" onPointerDown={() => !busy && onClose()}>
-      <div className="modal" style={{ width: 460 }} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => (e.stopPropagation(), e.key === "Escape" && !busy && onClose())}>
+  return (
+    <Dialog title={url ? "Pull request opened" : "Open a pull request"} width={460} busy={busy} onClose={onClose}>
         {url ? (
           <>
-            <div className="modal-title">Pull request opened</div>
             <p className="muted">Reviewers see the design changes frame by frame{screenshots ? ", with before and after images" : ""}.</p>
             <div className="modal-actions">
               <button className="btn outline" onClick={onClose}>
@@ -538,7 +530,6 @@ function PrDialog({ defaultTitle, onClose }: { defaultTitle: string; onClose: ()
           </>
         ) : (
           <>
-            <div className="modal-title">Open a pull request</div>
             <p className="muted">
               <span className="mono">{git.branch}</span> into <span className="mono">{git.defaultBranch ?? "main"}</span>. The description lists what changed in each frame.
             </p>
@@ -572,9 +563,7 @@ function PrDialog({ defaultTitle, onClose }: { defaultTitle: string; onClose: ()
             </div>
           </>
         )}
-      </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }
 
@@ -593,10 +582,8 @@ function PublishDialog({ onClose }: { onClose: () => void }) {
       onClose();
     }
   };
-  return createPortal(
-    <div className="modal-backdrop" onPointerDown={() => !busy && onClose()}>
-      <div className="modal" style={{ width: 400 }} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => (e.stopPropagation(), e.key === "Escape" && !busy && onClose())}>
-        <div className="modal-title">Publish to GitHub</div>
+  return (
+    <Dialog title="Publish to GitHub" width={400} busy={busy} onClose={onClose}>
         <p className="muted">Creates a repository on your GitHub account (with the GitHub CLI) and pushes this project to it.</p>
         <div className="field" style={{ marginBottom: 10 }}>
           <span className="prefix">
@@ -615,9 +602,7 @@ function PublishDialog({ onClose }: { onClose: () => void }) {
             {busy ? <LoaderCircle size={13} className="spin-working" /> : <UploadCloud size={13} />} Publish
           </button>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }
 
@@ -789,11 +774,15 @@ function CodeDiff({ canvas }: { canvas: string }) {
   const [diff, setDiff] = useState<string | null>(null);
   const review = useStore((s) => s.review);
   useEffect(() => {
+    let stale = false;
     setDiff(null);
     void api
       .gitDiff(canvas)
-      .then((r) => setDiff(r.diff))
-      .catch(() => setDiff(""));
+      .then((r) => !stale && setDiff(r.diff))
+      .catch(() => !stale && setDiff(""));
+    return () => {
+      stale = true;
+    };
   }, [canvas, review]);
   if (diff === null)
     return (

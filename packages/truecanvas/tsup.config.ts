@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 
 export default defineConfig([
   {
-    entry: { cli: "src/cli/index.ts", "next/index": "src/next/index.ts", "core/index": "src/core/index.ts", "catalog-worker": "src/core/catalog-worker.ts" },
+    entry: { cli: "src/cli/index.ts", "next/index": "src/next/index.ts", "core/index": "src/core/index.ts", "catalog-worker": "src/core/catalog-worker.ts", "icons-worker": "src/core/icons-worker.ts" },
     format: ["esm"],
     platform: "node",
     target: "node20",

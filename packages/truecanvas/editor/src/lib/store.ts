@@ -47,6 +47,12 @@ const AGENT_COLORS: Record<string, string> = {
 const PALETTE = ["#e5484d", "#f76b15", "#ffc53d", "#30a46c", "#0090ff", "#8e4ec6", "#d6409f"];
 
 /** Stable color per agent: brand-ish for known clients, hashed for the rest. */
+/** "claude-code" → "Claude Code": how an agent is named in the UI. */
+export function agentLabel(name: string) {
+  const known: Record<string, string> = { "claude-code": "Claude Code", cursor: "Cursor", "codex-mcp-client": "Codex", codex: "Codex", "claude-ai": "Claude" };
+  return known[name] ?? name.replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
 export function agentColor(name: string): string {
   if (AGENT_COLORS[name]) return AGENT_COLORS[name];
   let h = 0;
@@ -63,6 +69,10 @@ interface State {
   componentsDir: string;
   /** Create / New component dialog */
   componentDialog: { from: string | null } | null;
+  /** the Libraries dialog (icon sets, shadcn/ui) and its tab */
+  libraryDialog: { tab: "icons" | "shadcn" } | null;
+  /** where a layer dragged in the layers tree would land */
+  layerDrop: { id: string; where: "before" | "after" | "inside" } | null;
   mcpUrl: string;
   darkMode: DarkMode;
   canvases: string[];
@@ -171,6 +181,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   projectName: "",
   componentsDir: "components",
   componentDialog: null,
+  libraryDialog: null,
+  layerDrop: null,
   mcpUrl: "",
   darkMode: { strategy: "class", value: "dark" },
   canvases: [],
@@ -227,6 +239,8 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setDoc: (incoming) => {
     const prev = get();
+    // command responses and server events race: never replace a newer tree with an older one
+    if (prev.doc && prev.doc.name === incoming.name && incoming.rev !== undefined && prev.doc.rev !== undefined && incoming.rev < prev.doc.rev) return;
     // A syntax error while someone is mid-edit: keep showing the last good tree.
     if (incoming.error && prev.doc && !prev.doc.error && prev.doc.name === incoming.name) {
       set({ docError: incoming.error });

@@ -3,10 +3,11 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import type { TruecanvasConfig } from "./config.js";
 import { Catalog, importSpecifier } from "./catalog.js";
+import { ICON_LIBRARIES, iconLibrary, loadIcons, searchIcons } from "./icons.js";
 import { CanvasEditor, EditError, attrCode, componentNamesIn, frameCode, indentBlock, parseJsx, textCode, type Literal } from "./edit.js";
 import { parseModule } from "./ast.js";
 import { findFrame, findNode, parseCanvas } from "./parse.js";
-import { applyPlan, dedent, explorationBody, linkedFrameBody, pruneImports, resolveLinks, splitComponentRef } from "./link.js";
+import { applyPlan, dedent, explorationBody, linkedFrameBody, pruneImports, resolveLinks } from "./link.js";
 import { fileOfId, parseModuleDoc, parseSourceDoc, parseTargetDoc } from "./source.js";
 import { ensureMotionComponents, motionFiles, type MotionFiles } from "./motion.js";
 import { componentFile, componentName, importsFor, newComponentPath, starterJsx } from "./components.js";
@@ -27,6 +28,7 @@ export type Command =
   | { op: "set_class"; canvas: string; id: string; className: string }
   | { op: "insert_jsx"; canvas: string; parent: string; index?: number; jsx: string }
   | { op: "insert_component"; canvas: string; parent: string; index?: number; component: string; props?: Record<string, Literal>; text?: string }
+  | { op: "insert_icon"; canvas: string; parent: string; index?: number; library: string; name: string; className?: string }
   | { op: "replace"; canvas: string; id: string; jsx: string }
   | { op: "duplicate"; canvas: string; ids: string[] }
   | { op: "delete"; canvas: string; ids: string[] }
@@ -114,7 +116,8 @@ export class Workspace {
   private sources = new Map<string, string>();
   private undoStacks = new Map<string, HistoryEntry[]>();
   private redoStacks = new Map<string, HistoryEntry[]>();
-  readonly feed: HistoryEntry[] = [];
+  /** Activity across canvases: labels only, never file copies. */
+  readonly feed: PublicEntry[] = [];
   private seq = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private listeners = new Set<(e: WorkspaceEvent) => void>();
@@ -166,16 +169,39 @@ export class Workspace {
     return this.docFrom(canvas, this.read(canvas));
   }
 
-  /** A canvas doc with linked frames resolved to their page's layers. */
+  /**
+   * A canvas doc with linked frames resolved to their page's layers. Resolving
+   * reads and parses every linked page and layout, so the result is reused
+   * until the canvas source or one of those files changes (checked with stat).
+   */
   docFrom(canvas: string, source: string): CanvasDoc {
-    return resolveLinks(this.config, parseCanvas(canvas, this.relFile(canvas), source));
+    const hit = this.docCache.get(canvas);
+    if (hit && hit.source === source && hit.stamps.every(([rel, stamp]) => this.stamp(rel) === stamp)) return { ...hit.doc, rev: ++this.revision };
+    const doc = resolveLinks(this.config, parseCanvas(canvas, this.relFile(canvas), source));
+    const files = new Set(doc.frames.flatMap((f) => [...(f.link?.files ?? []), ...(f.page ? [f.page] : [])]));
+    this.docCache.set(canvas, { source, doc, stamps: [...files].map((rel) => [rel, this.stamp(rel)]) });
+    return { ...doc, rev: ++this.revision };
+  }
+  /** a doc computed later reflects the files at least as recently: its rev is higher */
+  private revision = 0;
+  private docCache = new Map<string, { source: string; doc: CanvasDoc; stamps: [string, string][] }>();
+  private stamp(rel: string): string {
+    try {
+      const st = fs.statSync(path.join(this.config.root, rel));
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return "missing";
+    }
   }
 
   /** Where a node's code lives: the canvas, or a linked page/layout file. */
   nodeSource(canvas: string, id: string) {
-    const hit = findNode(this.doc(canvas), id);
+    const doc = this.doc(canvas);
+    const hit = findNode(doc, id);
     if (!hit) return null;
-    const rel = fileOfId(id) ?? this.relFile(canvas);
+    const linked = fileOfId(id);
+    if (linked) assertShown(doc, linked);
+    const rel = linked ?? this.relFile(canvas);
     const abs = path.join(this.config.root, rel);
     return { node: hit.node, rel, abs, source: fs.readFileSync(abs, "utf8") };
   }
@@ -224,6 +250,8 @@ export class Workspace {
     const key = `file:${rel}`;
     if (this.sources.get(key) === next) return;
     this.sources.set(key, next);
+    // a new or removed layout changes which files frames show: resolve everything again
+    this.docCache.clear();
     for (const c of this.canvasesLinking(rel)) this.emit({ type: "doc", canvas: c, doc: this.doc(c) });
   }
 
@@ -310,6 +338,9 @@ export class Workspace {
     this.trash.set(name, fs.readFileSync(file, "utf8"));
     fs.unlinkSync(file);
     this.sources.delete(name);
+    // a new canvas with this name starts with a clean history
+    this.undoStacks.delete(name);
+    this.redoStacks.delete(name);
     this.canvasesChanged();
   }
 
@@ -356,9 +387,11 @@ export class Workspace {
         return await this.exec(cmd, actor);
       } catch (err) {
         if (!(err instanceof ConflictError)) throw err;
-        // pick up the external edit first so it stays undoable, then retry once
+        // pick up the external edit first so it stays undoable
         if (err.file) this.linkedFileChanged(err.file);
         else this.externalChange(path.basename(this.file(cmd.canvas)));
+        // ids are line:col: after an outside edit they may point at other layers, so don't guess
+        if (nodeRefs(cmd).length || ("frame" in cmd && cmd.frame)) throw new EditError(`${path.basename(err.file ?? this.relFile(cmd.canvas))} changed while editing. Re-read the canvas and try again.`);
         return this.exec(cmd, actor);
       }
     });
@@ -368,8 +401,16 @@ export class Workspace {
 
   private async exec(cmd: Command, actor: Actor) {
     cmd = { ...cmd };
-    // main components get their own page, made on first use
-    if (cmd.op === "add_component_frame" && !fs.existsSync(this.file(cmd.canvas))) this.createCanvas(cmd.canvas, actor, COMPONENTS_CANVAS);
+    // async work done before the synchronous edit (formatted snippets, plans, new files)
+    let prepared: Pending | null = null;
+    // main components get their own page, made on first use (only for a component that exists)
+    if (cmd.op === "add_component_frame" && !fs.existsSync(this.file(cmd.canvas))) {
+      await this.catalog.load();
+      const spec = this.catalog.get(cmd.component);
+      if (!spec) throw new EditError(`Unknown component "${cmd.component}". Use list_components.`);
+      if (spec.library) throw new EditError(`${spec.name} comes from ${spec.library}: it can't be edited here.`);
+      this.createCanvas(cmd.canvas, actor, COMPONENTS_CANVAS);
+    }
     const canvasSource = this.read(cmd.canvas);
     const canvasDoc = parseCanvas(cmd.canvas, this.relFile(cmd.canvas), canvasSource);
     if (canvasDoc.error) throw new EditError(`The canvas file does not parse: ${canvasDoc.error}`);
@@ -378,27 +419,45 @@ export class Workspace {
 
     // Which file the edit writes: the canvas, or the page/layout a linked layer comes from.
     let target = this.targetOf(cmd);
+    if (target) assertShown(view, target);
     if (cmd.op === "explore_copy") {
       // the canvas' own frame: its children are the layout/page wrappers
       const frame = findFrame(canvasDoc, cmd.frame);
       if (!frame) throw new EditError(`Frame "${cmd.frame}" not found.`);
       const body = explorationBody(this.config, frame, this.relFile(cmd.canvas));
-      this.pending = { kind: "explore", frame, imports: body.imports, jsx: await this.formatSnippet(body.jsx) };
+      prepared = { kind: "explore", frame, imports: body.imports, jsx: await this.formatSnippet(body.jsx) };
     }
     if (cmd.op === "apply_to_page") {
       const frame = findFrame(canvasDoc, cmd.frame);
       if (!frame) throw new EditError(`Frame "${cmd.frame}" not found.`);
       const plan = applyPlan(this.config, canvasSource, canvasDoc, frame, this.relFile(cmd.canvas));
       target = plan.page;
-      this.pending = { kind: "apply", frame, ...plan };
+      prepared = { kind: "apply", frame, ...plan };
     }
     const rel = target ?? this.relFile(cmd.canvas);
     const file = path.join(this.config.root, rel);
-    const before = target ? fs.readFileSync(file, "utf8") : canvasSource;
+    const original = target ? fs.readFileSync(file, "utf8") : canvasSource;
+    // Windows line endings: edit an LF copy (every edit inserts "\n"), write CRLF back
+    const crlf = original.includes("\r\n");
+    const before = crlf ? original.replace(/\r\n/g, "\n") : original;
     const parse = (src: string): CanvasDoc | null => (target ? parseTargetDoc(target, src) : parseCanvas(cmd.canvas, rel, src));
     const doc = parse(before);
     if (!doc) throw new EditError(`${rel} has data or logic in its component now, so it can't be edited from the canvas. Explore a copy instead.`);
 
+    if (cmd.op === "insert_icon") {
+      // the name must be a real icon of an installed library
+      const icon = cmd;
+      const lib = iconLibrary(icon.library);
+      if (!lib) throw new EditError(`Unknown icon library "${icon.library}". Known: ${ICON_LIBRARIES.map((l) => l.id).join(", ")}.`);
+      const icons = await loadIcons(this.config.root, lib.id);
+      const wanted = icon.name.toLowerCase();
+      const exact = icons.find((i) => i.name === icon.name) ?? icons.find((i) => i.name.toLowerCase() === wanted);
+      if (!exact) {
+        const near = searchIcons(icons, icon.name, 5).icons.map((i) => i.name);
+        throw new EditError(`No icon "${icon.name}" in ${lib.label}.${near.length ? ` Did you mean ${near.join(", ")}?` : " Use search_icons."}`);
+      }
+      cmd = { ...icon, library: lib.id, name: exact.name };
+    }
     if ((cmd.op === "insert_jsx" || cmd.op === "replace" || cmd.op === "create_frame") && cmd.jsx) {
       cmd = { ...cmd, jsx: await this.formatSnippet(cmd.jsx) };
     }
@@ -409,17 +468,17 @@ export class Workspace {
       if (!r) throw new EditError(`No page "${cmd.route}". Pages: ${routes.map((x) => x.route).join(", ") || "none"}`);
       if (cmd.copy) {
         const built = routeFrame(this.config, r.file, this.relFile(cmd.canvas));
-        this.pending = { kind: "route", route: r.route, page: null, imports: built.imports, mode: built.mode, jsx: await this.formatSnippet(built.jsx) };
+        prepared = { kind: "route", route: r.route, page: null, imports: built.imports, mode: built.mode, jsx: await this.formatSnippet(built.jsx) };
       } else {
         const built = linkedFrameBody(this.config, canvasDoc, this.relFile(cmd.canvas), r.file);
-        this.pending = { kind: "route", route: r.route, page: r.file, imports: built.imports, mode: "linked", jsx: built.jsx };
+        prepared = { kind: "route", route: r.route, page: r.file, imports: built.imports, mode: "linked", jsx: built.jsx };
       }
     }
     if (cmd.op === "add_animation") {
       // first animation in the project: add the Reveal/TextAnimate components
       const files = ensureMotionComponents(this.config);
       if (files.created) this.catalog.invalidate();
-      this.motion = files;
+      prepared = { kind: "motion", files };
     }
     let newComponent: { rel: string; content: string } | null = null;
     let movedNames = new Set<string>();
@@ -442,13 +501,13 @@ export class Workspace {
       }
       const abs = path.join(this.config.root, fileRel);
       newComponent = { rel: fileRel, content: await this.format(componentFile(name, jsx, imports), abs).catch(() => componentFile(name, jsx, imports)) };
-      this.pending = { kind: "component", name, file: fileRel };
+      prepared = { kind: "component", name, file: fileRel };
     }
     await this.catalog.load().catch(() => []);
     const ed = new CanvasEditor(before, doc);
     const renamedFrame = cmd.op === "update_frame" && cmd.name !== undefined ? findFrame(doc, cmd.frame) : null;
     const usedBefore = cmd.op === "apply_to_page" ? new Set(componentNamesIn(before.slice(doc.frames[0].children[0].start, doc.frames[0].children[0].end))) : null;
-    const label = this.apply(ed, cmd, rel);
+    const label = this.apply(ed, cmd, rel, prepared);
     // Respect the file's style: only run Prettier if the file was already Prettier-clean.
     const pretty = await this.isPrettierClean(before, file);
     const finish = async (code: string) => (pretty ? this.format(code, file) : validate(code));
@@ -488,20 +547,27 @@ export class Workspace {
     // "Apply to page" selects the frame it applied
     if (cmd.op === "apply_to_page") ids = [findFrame(canvasDoc, cmd.frame)!.id];
 
-    if (after === before) return { doc: target ? this.doc(cmd.canvas) : view, ids, label };
-    // Someone saved the file while we were formatting: don't overwrite their change.
-    if (fs.readFileSync(file, "utf8") !== before) throw new ConflictError(`${path.basename(rel)} changed during the edit.`, target ?? undefined);
-    if (newComponent) {
+    const writeNewComponent = () => {
+      if (!newComponent) return;
       fs.mkdirSync(path.dirname(path.join(this.config.root, newComponent.rel)), { recursive: true });
       fs.writeFileSync(path.join(this.config.root, newComponent.rel), newComponent.content, { flag: "wx" });
       this.catalog.invalidate();
       this.emit({ type: "catalog" });
+    };
+    if (crlf) after = after.replace(/\n/g, "\r\n");
+    if (after === original) {
+      // a component created on its own changes no canvas, but its file is still written
+      writeNewComponent();
+      return { doc: target ? this.doc(cmd.canvas) : view, ids, label };
     }
+    // Someone saved the file while we were formatting: don't overwrite their change.
+    if (fs.readFileSync(file, "utf8") !== original) throw new ConflictError(`${path.basename(rel)} changed during the edit.`, target ?? undefined);
+    writeNewComponent();
     if (target) this.sources.set(`file:${target}`, after);
     else this.sources.set(cmd.canvas, after);
     fs.writeFileSync(file, after);
     const newDoc = this.doc(cmd.canvas);
-    this.record(cmd.canvas, label, actor, before, after, ids, target ?? undefined, touchedFrames(cmd, ids, view, newDoc));
+    this.record(cmd.canvas, label, actor, original, after, ids, target ?? undefined, touchedFrames(cmd, ids, view, newDoc));
     if (renamedFrame) {
       const now = newDoc.frames[renamedFrame.path[0]];
       if (now && now.frameName !== renamedFrame.frameName) {
@@ -558,7 +624,47 @@ export class Workspace {
     return [...files][0] ?? null;
   }
 
-  private apply(ed: CanvasEditor, cmd: Command, rel: string): string {
+  /** Applies a command to the file being edited and returns its history label. */
+  private apply(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
+    switch (cmd.op) {
+      case "set_props":
+      case "set_text":
+      case "set_class":
+      case "insert_jsx":
+      case "insert_component":
+      case "insert_icon":
+      case "replace":
+      case "duplicate":
+      case "delete":
+      case "move":
+      case "reorder":
+      case "wrap":
+        return this.applyLayerEdit(ed, cmd, rel, prepared);
+      case "create_frame":
+      case "update_frame":
+      case "add_background":
+      case "apply_preset":
+      case "create_variants":
+      case "add_component_frame":
+        return this.applyFrameEdit(ed, cmd, rel, prepared);
+      case "import_route":
+      case "explore_copy":
+      case "apply_to_page":
+        return this.applyPageEdit(ed, cmd, rel, prepared);
+      case "add_animation":
+      case "remove_animation":
+        return this.applyMotionEdit(ed, cmd, rel, prepared);
+      case "create_component":
+        return this.applyComponentEdit(ed, cmd, rel, prepared);
+      default: {
+        const unknown: never = cmd;
+        throw new EditError(`Unknown command ${(unknown as { op: string }).op}.`);
+      }
+    }
+  }
+
+  /** Edits to layers: props, text, classes, inserting, moving, wrapping. */
+  private applyLayerEdit(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
     const doc = ed.doc;
     // the root of a page or layout file can't be removed or moved: the component must return something
     const guard = (node: CanvasNode, verb: string) => {
@@ -620,6 +726,14 @@ export class Workspace {
         ed.insertChild(parent, cmd.index, jsx);
         return `Inserted ${spec.name}`;
       }
+      case "insert_icon": {
+        const parent = ed.container(cmd.parent);
+        const lib = iconLibrary(cmd.library)!;
+        const local = ed.importAs(cmd.name, lib.from, `${cmd.name.replace(/Icon$/, "")}Icon`);
+        const className = cmd.className?.trim() ?? "size-4";
+        ed.insertChild(parent, cmd.index, `<${local}${className ? ` className=${JSON.stringify(className)}` : ""} />`);
+        return `Inserted ${cmd.name} icon`;
+      }
       case "replace": {
         const { node } = ed.node(cmd.id);
         parseJsx(cmd.jsx);
@@ -628,7 +742,9 @@ export class Workspace {
         return `Replaced ${node.name}`;
       }
       case "duplicate": {
-        const nodes = cmd.ids.map((id) => ed.node(id));
+        const all = cmd.ids.map((id) => ed.node(id));
+        // a layer selected with its own child is copied once, with the child inside
+        const nodes = all.filter(({ node: n }) => !all.some(({ node: o }) => o !== n && n.start >= o.start && n.end <= o.end));
         for (const { node } of nodes) guard(node, "duplicate");
         for (const { node } of nodes) ed.duplicate(node);
         return nodes.length === 1 ? `Duplicated ${nodes[0].node.kind === "component" && "frameName" in nodes[0].node ? "frame" : nodes[0].node.name}` : `Duplicated ${nodes.length} layers`;
@@ -666,11 +782,20 @@ export class Workspace {
         ed.wrap(nodes, `<div className="${cls}">`, "</div>");
         return nodes.length === 1 ? `Wrapped ${nodes[0].name} in auto layout` : `Wrapped ${nodes.length} layers in auto layout`;
       }
+      default:
+        throw new Error(`Internal: ${cmd.op} isn't handled by applyLayerEdit.`);
+    }
+  }
+
+  /** Frames: creating, updating, backgrounds, presets, variant grids, main component frames. */
+  private applyFrameEdit(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
+    const doc = ed.doc;
+    switch (cmd.op) {
       case "create_frame": {
         const device = findDevice(cmd.device);
         if (cmd.device && !device) throw new EditError(`Unknown device "${cmd.device}". Devices: ${DEVICES.map((d) => d.id).join(", ")}`);
         const name = uniqueFrameName(doc, cmd.name ?? device?.name ?? "Frame");
-        const right = doc.frames.reduce((m, f) => Math.max(m, f.x + f.width), -80);
+        const right = rightEdge(doc);
         const top = doc.frames.length ? Math.min(...doc.frames.map((f) => f.y)) : 0;
         if (cmd.jsx) {
           parseJsx(cmd.jsx);
@@ -764,19 +889,65 @@ export class Workspace {
         ed.selectPaths.push(node.path);
         return `Applied ${preset.name} preset to ${spec.name}`;
       }
+      case "create_variants": {
+        const spec = this.catalog.get(cmd.component);
+        if (!spec) throw new EditError(`Unknown component "${cmd.component}".`);
+        const prop = spec.props.find((p) => p.name === cmd.prop);
+        if (!prop) throw new EditError(`${spec.name} has no prop "${cmd.prop}".`);
+        const values: Literal[] = prop.type === "enum" ? prop.options! : prop.type === "boolean" ? [false, true] : [];
+        if (!values.length) throw new EditError(`Prop "${cmd.prop}" is ${prop.typeText}; variants need a union of string literals or a boolean.`);
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        const label = (v: Literal) => (typeof v === "string" ? v[0].toUpperCase() + v.slice(1) : `${prop.name}: ${v}`);
+        const rows = indentBlock(values.map((v) => componentJsx(spec, { ...cmd.props, [prop.name]: v }, spec.acceptsChildren ? label(v) : undefined)).join("\n"));
+        const right = rightEdge(doc);
+        const name = uniqueFrameName(doc, `${spec.name} · ${prop.name}`);
+        ed.insertFrame(frameCode({ name, x: cmd.x ?? right + 80, y: cmd.y ?? 0, width: 360, body: `<div className="flex flex-col gap-3 p-4">\n${rows}\n</div>` }));
+        return `Created ${spec.name} ${prop.name} variants`;
+      }
+      case "add_component_frame": {
+        const spec = this.catalog.get(cmd.component);
+        if (!spec) throw new EditError(`Unknown component "${cmd.component}". Use list_components.`);
+        if (spec.library) throw new EditError(`${spec.name} comes from ${spec.library}: it can't be edited here.`);
+        const existing = doc.frames.find((f) => f.component === `${spec.file}#${spec.name}`);
+        if (existing) {
+          ed.selectPaths.push(existing.path);
+          return `Opened ${spec.name}`;
+        }
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        const right = rightEdge(doc);
+        const top = doc.frames.length ? Math.min(...doc.frames.map((f) => f.y)) : 0;
+        ed.insertFrame(
+          frameCode({
+            name: uniqueFrameName(doc, spec.name),
+            x: cmd.x ?? right + 80,
+            y: cmd.y ?? top,
+            width: cmd.width ?? 640,
+            component: `${spec.file}#${spec.name}`,
+            body: `<div className="p-10">\n  ${componentJsx(spec)}\n</div>`,
+          }),
+        );
+        return `Opened main component ${spec.name}`;
+      }
+      default:
+        throw new Error(`Internal: ${cmd.op} isn't handled by applyFrameEdit.`);
+    }
+  }
+
+  /** Linked pages: adding a page, exploring a copy, applying it back. */
+  private applyPageEdit(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
+    const doc = ed.doc;
+    switch (cmd.op) {
       case "import_route": {
-        const built = this.pending as Extract<Pending, { kind: "route" }>;
-        this.pending = null;
+        const built = take(prepared, "route");
         for (const stmt of built.imports) ed.addImportStatement(stmt);
-        const right = doc.frames.reduce((m, f) => Math.max(m, f.x + f.width), -80);
+        const right = rightEdge(doc);
         const top = doc.frames.length ? Math.min(...doc.frames.map((f) => f.y)) : 0;
         const name = uniqueFrameName(doc, cmd.name ?? (built.route === "/" ? "Home" : built.route.split("/").filter(Boolean).map((p) => p.replace(/^./, (c) => c.toUpperCase())).join(" / ")));
         ed.insertFrame(frameCode({ name, x: cmd.x ?? right + 80, y: cmd.y ?? top, width: cmd.width ?? 1440, height: null, page: built.page ?? undefined, body: built.jsx }));
         return built.mode === "linked" ? `Linked ${built.route}` : built.mode === "inline" ? `Copied ${built.route} as layers` : `Copied ${built.route}`;
       }
       case "explore_copy": {
-        const built = this.pending as Extract<Pending, { kind: "explore" }>;
-        this.pending = null;
+        const built = take(prepared, "explore");
         const f = built.frame;
         for (const stmt of built.imports) ed.addImportStatement(stmt);
         // right of everything in the frame's row
@@ -788,17 +959,24 @@ export class Workspace {
         return `Explored a copy of ${f.frameName}`;
       }
       case "apply_to_page": {
-        const plan = this.pending as Extract<Pending, { kind: "apply" }>;
-        this.pending = null;
+        const plan = take(prepared, "apply");
         for (const stmt of plan.imports) ed.addImportStatement(stmt);
         ed.replace(doc.frames[0].children[0], plan.jsx);
         return `Applied ${plan.frame.frameName} to ${plan.page}`;
       }
+      default:
+        throw new Error(`Internal: ${cmd.op} isn't handled by applyPageEdit.`);
+    }
+  }
+
+  /** Scroll reveals and text animations. */
+  private applyMotionEdit(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
+    switch (cmd.op) {
       case "add_animation": {
         const { node, parent } = ed.node(cmd.id);
         if ("frameName" in node) throw new EditError("Animate a layer inside the frame, not the frame itself.");
         if (node.kind === "expression") throw new EditError("Expressions can't be animated; pick the element around it.");
-        const files = this.motion ?? motionFiles(this.config);
+        const files = prepared?.kind === "motion" ? prepared.files : motionFiles(this.config);
         const props: Record<string, Literal> = {};
         if (cmd.effect !== undefined) props.effect = cmd.effect;
         for (const k of ["delay", "duration", "stagger"] as const) if (cmd[k] !== undefined && !(cmd.kind === "reveal" && k === "stagger")) props[k] = Math.round(cmd[k]! * 100) / 100;
@@ -851,10 +1029,18 @@ export class Workspace {
         ed.selectPaths.push(wrapper === kids[0] ? node.path : wrapper.path);
         return cmd.kind === "reveal" ? "Removed the reveal" : "Removed the text animation";
       }
+      default:
+        throw new Error(`Internal: ${cmd.op} isn't handled by applyMotionEdit.`);
+    }
+  }
+
+  /** New components, from scratch or from selected layers. */
+  private applyComponentEdit(ed: CanvasEditor, cmd: Command, rel: string, prepared: Pending | null): string {
+    switch (cmd.op) {
       case "create_component": {
-        const made = this.pending as Extract<Pending, { kind: "component" }>;
-        this.pending = null;
-        ed.ensureImport(made.name, importSpecifier(this.config.root, rel, made.file));
+        const made = take(prepared, "component");
+        // only import it where it's used
+        if (cmd.from || cmd.parent) ed.ensureImport(made.name, importSpecifier(this.config.root, rel, made.file));
         if (cmd.from) {
           const { node } = ed.node(cmd.from);
           ed.replace(node, `<${made.name} />`);
@@ -864,45 +1050,8 @@ export class Workspace {
         ed.insertChild(ed.container(cmd.parent), cmd.index, `<${made.name} />`);
         return `Created component ${made.name}`;
       }
-      case "add_component_frame": {
-        const spec = this.catalog.get(cmd.component);
-        if (!spec) throw new EditError(`Unknown component "${cmd.component}". Use list_components.`);
-        if (spec.library) throw new EditError(`${spec.name} comes from ${spec.library}: it can't be edited here.`);
-        const existing = doc.frames.find((f) => f.component === `${spec.file}#${spec.name}`);
-        if (existing) {
-          ed.selectPaths.push(existing.path);
-          return `Opened ${spec.name}`;
-        }
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
-        const right = doc.frames.reduce((m, f) => Math.max(m, f.x + f.width), -80);
-        const top = doc.frames.length ? Math.min(...doc.frames.map((f) => f.y)) : 0;
-        ed.insertFrame(
-          frameCode({
-            name: uniqueFrameName(doc, spec.name),
-            x: cmd.x ?? right + 80,
-            y: cmd.y ?? top,
-            width: cmd.width ?? 640,
-            component: `${spec.file}#${spec.name}`,
-            body: `<div className="p-10">\n  ${componentJsx(spec)}\n</div>`,
-          }),
-        );
-        return `Opened main component ${spec.name}`;
-      }
-      case "create_variants": {
-        const spec = this.catalog.get(cmd.component);
-        if (!spec) throw new EditError(`Unknown component "${cmd.component}".`);
-        const prop = spec.props.find((p) => p.name === cmd.prop);
-        if (!prop) throw new EditError(`${spec.name} has no prop "${cmd.prop}".`);
-        const values: Literal[] = prop.type === "enum" ? prop.options! : prop.type === "boolean" ? [false, true] : [];
-        if (!values.length) throw new EditError(`Prop "${cmd.prop}" is ${prop.typeText}; variants need a union of string literals or a boolean.`);
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
-        const label = (v: Literal) => (typeof v === "string" ? v[0].toUpperCase() + v.slice(1) : `${prop.name}: ${v}`);
-        const rows = indentBlock(values.map((v) => componentJsx(spec, { ...cmd.props, [prop.name]: v }, spec.acceptsChildren ? label(v) : undefined)).join("\n"));
-        const right = doc.frames.reduce((m, f) => Math.max(m, f.x + f.width), -80);
-        const name = uniqueFrameName(doc, `${spec.name} · ${prop.name}`);
-        ed.insertFrame(frameCode({ name, x: cmd.x ?? right + 80, y: cmd.y ?? 0, width: 360, body: `<div className="flex flex-col gap-3 p-4">\n${rows}\n</div>` }));
-        return `Created ${spec.name} ${prop.name} variants`;
-      }
+      default:
+        throw new Error(`Internal: ${cmd.op} isn't handled by applyComponentEdit.`);
     }
   }
 
@@ -917,9 +1066,6 @@ export class Workspace {
     }
   }
 
-  private motion: MotionFiles | null = null;
-  /** work resolved (async) in exec before the synchronous apply */
-  private pending: Pending | null = null;
   private cleanCache = new Map<string, boolean>();
   async isPrettierClean(source: string, file: string): Promise<boolean> {
     const hit = this.cleanCache.get(source);
@@ -971,10 +1117,29 @@ export class Workspace {
     if (stack.length > 200) stack.shift();
     this.undoStacks.set(canvas, stack);
     this.redoStacks.set(canvas, []);
-    this.feed.push(entry);
+    this.feed.push(publicEntry(entry));
     if (this.feed.length > 300) this.feed.shift();
+    this.trimHistory();
     this.emit({ type: "change", entry: publicEntry(entry), ids });
     this.emitHistory(canvas);
+  }
+
+  /**
+   * Undo entries hold whole files (before and after). Keep their total under a
+   * budget by dropping the oldest entries across canvases, so long sessions on
+   * big pages don't grow without limit.
+   */
+  private trimHistory(budget = 48 * 1024 * 1024) {
+    const all = [...this.undoStacks.values(), ...this.redoStacks.values()];
+    let total = 0;
+    for (const stack of all) for (const e of stack) total += e.before.length + e.after.length;
+    while (total > budget) {
+      let oldest: HistoryEntry[] | null = null;
+      for (const stack of all) if (stack.length && (!oldest || stack[0].at < oldest[0].at)) oldest = stack;
+      if (!oldest) break;
+      const e = oldest.shift()!;
+      total -= e.before.length + e.after.length;
+    }
   }
 
   /** Changes still in effect (not undone) on a canvas since a time, oldest first. */
@@ -1005,14 +1170,18 @@ export class Workspace {
       const entry = stack[stack.length - 1];
       if (!entry) throw new EditError(`Nothing to ${dir}.`);
       if (dir === "undo" && entry.before === "") throw new EditError("Cannot undo creating the canvas; delete the file instead.");
-      stack.pop();
       const file = entry.file ? path.join(this.config.root, entry.file) : this.file(canvas);
-      const current = entry.file ? fs.readFileSync(file, "utf8") : this.read(canvas);
-      const expected = dir === "undo" ? entry.after : entry.before;
-      if (current !== expected) {
-        stack.push(entry);
-        throw new EditError(`Cannot ${dir} "${entry.label}": ${entry.file ? path.basename(entry.file) : "the file"} changed since.`);
+      const name = entry.file ? path.basename(entry.file) : "the file";
+      // check first, pop after: a failed undo keeps its entry
+      let current: string;
+      try {
+        current = entry.file ? fs.readFileSync(file, "utf8") : this.read(canvas);
+      } catch {
+        throw new EditError(`Cannot ${dir} "${entry.label}": ${name} can't be read right now.`);
       }
+      const expected = dir === "undo" ? entry.after : entry.before;
+      if (current !== expected) throw new EditError(`Cannot ${dir} "${entry.label}": ${name} changed since.`);
+      stack.pop();
       const next = dir === "undo" ? entry.before : entry.after;
       this.sources.set(entry.file ? `file:${entry.file}` : canvas, next);
       fs.writeFileSync(file, next);
@@ -1023,9 +1192,10 @@ export class Workspace {
       this.emit({ type: "doc", canvas, doc });
       if (entry.file) for (const c of this.canvasesLinking(entry.file)) if (c !== canvas) this.emit({ type: "doc", canvas: c, doc: this.doc(c) });
       const label = `${dir === "undo" ? "Undid" : "Redid"} “${entry.label}”`;
-      const marker: HistoryEntry = { ...entry, id: ++this.seq, label, actor, at: Date.now() };
+      const marker = publicEntry({ ...entry, id: ++this.seq, label, actor, at: Date.now() });
       this.feed.push(marker);
-      this.emit({ type: "change", entry: publicEntry(marker), ids: [] });
+      if (this.feed.length > 300) this.feed.shift();
+      this.emit({ type: "change", entry: marker, ids: [] });
       this.emitHistory(canvas);
       return { doc, label };
     });
@@ -1034,7 +1204,7 @@ export class Workspace {
   }
 
   publicFeed(): PublicEntry[] {
-    return this.feed.map(publicEntry);
+    return this.feed;
   }
 
   // ---------- agents ----------
@@ -1125,10 +1295,17 @@ export default function ComponentsCanvas() {
 `;
 
 type Pending =
+  | { kind: "motion"; files: MotionFiles }
   | { kind: "component"; name: string; file: string }
   | { kind: "route"; route: string; page: string | null; imports: string[]; mode: "inline" | "component" | "linked"; jsx: string }
   | { kind: "explore"; frame: import("./types.js").CanvasFrame; imports: string[]; jsx: string }
   | { kind: "apply"; frame: import("./types.js").CanvasFrame; page: string; imports: string[]; jsx: string };
+
+/** The prepared step a command needs; it's always prepared in exec for that op. */
+function take<K extends Pending["kind"]>(prepared: Pending | null, kind: K): Extract<Pending, { kind: K }> {
+  if (prepared?.kind !== kind) throw new Error(`Internal: the ${kind} step wasn't prepared.`);
+  return prepared as Extract<Pending, { kind: K }>;
+}
 
 function validate(code: string): string {
   try {
@@ -1146,6 +1323,21 @@ function publicEntry(e: HistoryEntry): PublicEntry {
 
 /** Frame names an edit touched: its targets before the edit and its results after. */
 /** Every layer a command points at: id, ids, parent, and the layers create_component takes from. */
+/**
+ * Ids carry their file (`app/page.tsx#12:4`). Only files a frame of this canvas
+ * shows (its linked page, layouts, or main component) may be read or edited
+ * through them: never an arbitrary path like `../../x.tsx#1:1`.
+ */
+function assertShown(view: CanvasDoc, rel: string) {
+  const shown = view.frames.some((f) => f.link?.files.includes(rel));
+  if (!shown || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) throw new EditError(`${rel} isn't shown on this canvas. Re-read the canvas for current ids.`);
+}
+
+/** Where the canvas' frames end on the right (new frames go 80px past it). */
+function rightEdge(doc: CanvasDoc): number {
+  return doc.frames.reduce((m, f) => Math.max(m, f.x + f.width), -80);
+}
+
 function nodeRefs(cmd: Command): string[] {
   const refs: string[] = [];
   if ("id" in cmd && cmd.id) refs.push(cmd.id);

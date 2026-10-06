@@ -110,7 +110,9 @@ export class CanvasEditor {
     } else if (node.openEnd === node.closeStart) {
       this.s.appendLeft(node.openEnd, code);
     } else {
-      this.s.overwrite(node.openEnd, node.closeStart, code);
+      // JSX comments aren't layers: keep them, in front of the new text
+      const comments = this.source.slice(node.openEnd, node.closeStart).match(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g) ?? [];
+      this.s.overwrite(node.openEnd, node.closeStart, comments.join("") + code);
     }
   }
 
@@ -153,14 +155,21 @@ export class CanvasEditor {
     return this.lineIndent(parent.start) + this.unit();
   }
 
-  /** Re-indents lines 2..n of a snippet so it sits at `indent`. */
+  /**
+   * Re-indents lines 2..n of a snippet so it sits at `indent`. Lines that start
+   * inside a multi-line string or template literal are content, not code: they
+   * are kept exactly as written.
+   */
   shift(code: string, indent: string): string {
-    const lines = code.trim().split("\n");
-    const rest = lines.slice(1).filter((l) => l.trim());
+    const trimmed = code.trim();
+    const lines = trimmed.split("\n");
+    const frozen = literalLines(trimmed);
+    const free = (i: number) => !frozen.has(i);
+    const rest = lines.slice(1).filter((l, i) => l.trim() && free(i + 1));
     const base = rest.length ? Math.min(...rest.map((l) => /^[ \t]*/.exec(l)![0].length)) : 0;
-    const relative = lines.slice(1).map((l) => (l.trim() ? l.slice(base) : ""));
+    const relative = lines.slice(1).map((l, i) => (free(i + 1) ? (l.trim() ? l.slice(base) : "") : l));
     // a snippet indented by 2 lands in a 4-space (or tab) file with the file's unit
-    const steps = relative.map((l) => /^ */.exec(l)![0].length).filter((n) => n > 0);
+    const steps = relative.filter((_, i) => free(i + 1)).map((l) => /^ */.exec(l)![0].length).filter((n) => n > 0);
     const from = steps.length ? Math.min(...steps) : 0;
     const unit = this.unit();
     const convert = (l: string) => {
@@ -168,7 +177,7 @@ export class CanvasEditor {
       const n = /^ */.exec(l)![0].length;
       return unit.repeat(Math.floor(n / from)) + " ".repeat(n % from) + l.slice(n);
     };
-    return [lines[0], ...relative.map((l) => (l ? indent + convert(l) : ""))].join("\n");
+    return [lines[0], ...relative.map((l, i) => (!free(i + 1) ? l : l ? indent + convert(l) : ""))].join("\n");
   }
 
   private openToClose(node: CanvasNode, inner: string) {
@@ -231,17 +240,20 @@ export class CanvasEditor {
       this.placed.push({ x: right + 80, y: f.y, width: f.width, height: h });
       code = rewriteFrameProps(code, { name, x: right + 80 });
     }
-    this.s.appendLeft(this.contentEnd(node), `\n${this.lineIndent(node.start)}${code.trim()}`);
-    const path = [...node.path];
-    path[path.length - 1] += 1;
-    this.selectPaths.push(path);
+    // the copy carries the selection marker: paths shift when several siblings are duplicated
+    const marked = withMarker(code.trim(), node);
+    this.s.appendLeft(this.contentEnd(node), `\n${this.lineIndent(node.start)}${marked}`);
+    if (marked === code.trim()) {
+      const path = [...node.path];
+      path[path.length - 1] += 1;
+      this.selectPaths.push(path);
+    }
   }
 
   move(node: CanvasNode, target: CanvasNode, index: number | undefined) {
     if (isInside(target, node)) throw new EditError("Cannot move a node into itself.");
-    const raw = this.source.slice(this.contentStart(node), this.contentEnd(node));
     // Mark the moved element so it can be re-selected afterwards.
-    const code = node.kind === "component" || node.kind === "element" ? raw.replace(/^<([\w.:-]+)/, "<$1 __tcsel") : raw;
+    const code = withMarker(this.source.slice(this.contentStart(node), this.contentEnd(node)), node);
     const kids = target.children.filter((c) => c.id !== node.id);
     const i = index === undefined || index < 0 || index > kids.length ? kids.length : index;
     this.remove(node);
@@ -284,7 +296,8 @@ export class CanvasEditor {
       this.remove(node);
       return;
     }
-    const inner = this.source.slice(this.contentStart(kids[0]), this.contentEnd(kids[kids.length - 1]));
+    // everything between the tags, so comments around the children come along
+    const inner = node.selfClosing ? "" : this.source.slice(node.openEnd, node.closeStart).trim();
     this.s.overwrite(this.contentStart(node), this.contentEnd(node), this.shift(inner, this.lineIndent(this.contentStart(node))));
     this.selectPaths.push(node.path);
   }
@@ -304,8 +317,38 @@ export class CanvasEditor {
       this.s.appendLeft(same.lastSpecifierEnd!, `, ${name}`);
       return;
     }
+    this.addImportLine(`import { ${name} } from ${JSON.stringify(from)};`);
+  }
+
+  /**
+   * Imports `name` from `from` and returns the local name to write in JSX. When
+   * the name is already taken by something else (another import, a local
+   * component), it is imported under `alias` instead: `{ Search as SearchIcon }`.
+   */
+  importAs(name: string, from: string, alias: string): string {
+    const existing = this.doc.imports.find((i) => i.source === from && !i.typeOnly)?.bindings.find((b) => b.imported === name);
+    if (existing) return existing.local;
+    const key = `${from}\0${name}`;
+    const pending = this.importedAs.get(key);
+    if (pending) return pending;
+    const taken = (n: string) => this.doc.declared.includes(n) || this.added.has(n) || this.doc.imports.some((i) => i.names.includes(n) || i.defaultName === n);
+    let local = name;
+    if (taken(local)) {
+      local = alias;
+      for (let k = 2; taken(local); k++) local = `${alias}${k}`;
+    }
+    this.added.add(local);
+    this.importedAs.set(key, local);
+    const specifier = local === name ? name : `${name} as ${local}`;
+    const same = this.doc.imports.find((i) => i.source === from && !i.typeOnly && i.lastSpecifierEnd !== null);
+    if (same) this.s.appendLeft(same.lastSpecifierEnd!, `, ${specifier}`);
+    else this.addImportLine(`import { ${specifier} } from ${JSON.stringify(from)};`);
+    return local;
+  }
+  private importedAs = new Map<string, string>();
+
+  private addImportLine(line: string) {
     const last = this.doc.imports[this.doc.imports.length - 1];
-    const line = `import { ${name} } from ${JSON.stringify(from)};`;
     if (last) this.s.appendLeft(last.end, `\n${line}`);
     else if (this.doc.prologueEnd) this.s.appendLeft(this.doc.prologueEnd, `\n${line}`);
     else this.prependImport(line);
@@ -324,10 +367,7 @@ export class CanvasEditor {
     const known = new Set([...this.doc.imports.flatMap((i) => [...i.names, ...(i.defaultName ? [i.defaultName] : [])]), ...this.added]);
     if (names.length && names.every((n) => known.has(n))) return;
     for (const n of names) this.added.add(n);
-    const last = this.doc.imports[this.doc.imports.length - 1];
-    if (last) this.s.appendLeft(last.end, `\n${statement}`);
-    else if (this.doc.prologueEnd) this.s.appendLeft(this.doc.prologueEnd, `\n${statement}`);
-    else this.prependImport(statement);
+    this.addImportLine(statement);
   }
 
   private importsPrepended = false;
@@ -390,6 +430,53 @@ export function componentNamesIn(jsx: string): string[] {
     }
   });
   return [...names];
+}
+
+/**
+ * An element's code with the selection marker after its tag name and type
+ * arguments (`<List<string> __tcsel …`), so it can be found again after the
+ * edit. Text and expressions are returned unchanged.
+ */
+export function withMarker(code: string, node: CanvasNode): string {
+  if (node.kind !== "component" && node.kind !== "element") return code;
+  const m = /^<[\w.:-]+/.exec(code);
+  if (!m) return code;
+  let i = m[0].length;
+  if (code[i] === "<") {
+    // skip balanced type arguments: <List<Map<string, number>>>
+    for (let depth = 0; i < code.length; i++) {
+      if (code[i] === "<") depth++;
+      else if (code[i] === ">" && --depth === 0) {
+        i++;
+        break;
+      }
+    }
+  }
+  return `${code.slice(0, i)} __tcsel${code.slice(i)}`;
+}
+
+/** Indexes of the lines of `code` that begin inside a multi-line string or template literal. */
+function literalLines(code: string): Set<number> {
+  const out = new Set<number>();
+  if (!code.includes("\n") || !/[`"']/.test(code)) return out;
+  let ast;
+  try {
+    ast = parseModule(`<>${code}</>`);
+  } catch {
+    return out;
+  }
+  const ranges: [number, number][] = [];
+  // offsets are shifted back by the 2 characters of the wrapping `<>`
+  walk(ast, (n) => {
+    if (n.type === "TemplateLiteral" || n.type === "StringLiteral") ranges.push([n.start! - 2, n.end! - 2]);
+  });
+  if (!ranges.length) return out;
+  let offset = 0;
+  code.split("\n").forEach((line, i) => {
+    if (i > 0 && ranges.some(([a, b]) => offset > a && offset < b)) out.add(i);
+    offset += line.length + 1;
+  });
+  return out;
 }
 
 export function parseJsx(jsx: string) {

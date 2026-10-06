@@ -1,6 +1,6 @@
 import { api, findDevice, type CanvasFrame, type CanvasNode, type ComponentSpec, type Literal } from "./api";
-import { send } from "./bridge";
-import { rawId } from "./scope";
+import { refreshRects, send } from "./bridge";
+import { fromServer, rawId } from "./scope";
 import { persist, useStore, type Camera } from "./store";
 
 // Editor-level actions shared by the canvas, panels, menus and shortcuts.
@@ -45,10 +45,14 @@ export function replayFrame(name: string) {
   send(name, { type: "tc:replay" });
 }
 
+let cameraSave = 0;
 export function setCamera(cam: Camera) {
   useStore.setState({ camera: cam });
   const canvas = useStore.getState().canvas;
-  if (canvas) persist(`tc:camera:${canvas}`, cam);
+  if (!canvas) return;
+  // panning fires this on every wheel tick: save once the camera settles
+  clearTimeout(cameraSave);
+  cameraSave = window.setTimeout(() => persist(`tc:camera:${canvas}`, cam), 300);
 }
 
 export function fitBounds(b: { x: number; y: number; width: number; height: number }, maxZoom = 1, pad = 72) {
@@ -67,6 +71,55 @@ export function framesBounds(frames: CanvasFrame[]) {
   const x = Math.min(...xs);
   const y = Math.min(...ys);
   return { x, y, width: Math.max(...xe) - x, height: Math.max(...ye) - y };
+}
+
+// ---------- opening a canvas: known sizes, and a camera that shows something ----------
+
+const heightsKey = (canvas: string) => `tc:heights:${canvas}`;
+
+/** Hug frames' last measured heights: frames open at their real size instead of growing from a stub. */
+export function cachedHeights(canvas: string): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(heightsKey(canvas)) ?? "{}") as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+let heightsSave = 0;
+export function rememberHeights() {
+  const { canvas, frameHeights } = useStore.getState();
+  if (!canvas) return;
+  clearTimeout(heightsSave);
+  heightsSave = window.setTimeout(() => persist(heightsKey(canvas), frameHeights), 500);
+}
+
+/** Does this camera show any part of any frame? */
+export function cameraShowsFrames(cam: Camera, frames: CanvasFrame[]): boolean {
+  const { width, height } = viewportSize;
+  return frames.some((f) => {
+    const sx = cam.x + f.x * cam.zoom;
+    const sy = cam.y + f.y * cam.zoom;
+    return sx + f.width * cam.zoom > 0 && sx < width && sy + frameHeight(f) * cam.zoom > 0 && sy < height;
+  });
+}
+
+/**
+ * After an automatic fit on open, fit again as real heights arrive (a 360px
+ * stub becoming an 8000px page), until the user moves the camera themselves.
+ */
+let autoFit = false;
+export function startAutoFit() {
+  autoFit = true;
+  zoomToFit();
+  // only the first seconds of a canvas: later layout changes never move the camera
+  setTimeout(() => (autoFit = false), 6000);
+}
+export function stopAutoFit() {
+  autoFit = false;
+}
+export function refitIfAuto() {
+  if (autoFit) zoomToFit();
 }
 
 export function zoomToFit() {
@@ -239,4 +292,29 @@ export function applyUiTheme() {
   const pref = useStore.getState().uiTheme;
   const dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.ui = dark ? "dark" : "light";
+}
+
+/**
+ * Shows layers given by the server (raw ids) on a canvas: switches to it if
+ * needed, waits until its doc has loaded (not a fixed delay), maps ids to the
+ * editor's frame-scoped ones, selects them and zooms there.
+ */
+export function revealOnCanvas(canvas: string, ids: string[], opts: { zoom?: boolean } = {}) {
+  const show = () => {
+    const s = useStore.getState();
+    const mapped = ids.map((id) => fromServer(s.index, id)).filter((id) => s.index.has(id));
+    if (!mapped.length) return;
+    s.select(mapped);
+    if (opts.zoom !== false) void refreshRects().then(() => zoomToSelection());
+  };
+  const s = useStore.getState();
+  if (s.canvas === canvas && s.doc?.name === canvas) return show();
+  if (s.canvas !== canvas) useStore.setState({ canvas });
+  const stop = useStore.subscribe((now) => {
+    if (now.doc?.name !== canvas) return;
+    stop();
+    clearTimeout(giveUp);
+    show();
+  });
+  const giveUp = setTimeout(stop, 10_000);
 }

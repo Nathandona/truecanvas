@@ -1,6 +1,6 @@
 import { api } from "./api";
 import { refreshRects } from "./bridge";
-import { insertionPoint, zoomToSelection } from "./actions";
+import { insertionPoint, revealOnCanvas } from "./actions";
 import { useStore } from "./store";
 
 /** Plain HTML building blocks, inserted as Tailwind-styled JSX. `edit`: start typing its text right away. */
@@ -58,17 +58,8 @@ export async function editComponent(name: string) {
   const s = useStore.getState();
   try {
     const res = await api.command({ op: "add_component_frame", canvas: "components", component: name });
-    const show = () => {
-      useStore.getState().select(res.ids);
-      void refreshRects().then(() => zoomToSelection());
-    };
-    if (s.canvas !== "components") {
-      useStore.setState({ canvas: "components" });
-      setTimeout(show, 700);
-    } else {
-      s.setDoc(res.doc);
-      show();
-    }
+    if (s.canvas === "components") s.setDoc(res.doc);
+    revealOnCanvas("components", res.ids);
   } catch (e) {
     s.toast((e as Error).message);
   }

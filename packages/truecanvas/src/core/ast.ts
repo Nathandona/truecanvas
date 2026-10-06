@@ -43,3 +43,17 @@ export function walk(node: unknown, visit: (n: t.Node, parent: t.Node | null) =>
 export function isComponentName(name: string): boolean {
   return /^[A-Z]/.test(name) || name.includes(".");
 }
+
+/**
+ * An import statement with its module specifier changed, quotes kept. Splices
+ * by index: `$` sequences in paths are never read as replacement patterns.
+ */
+export function rewriteImportSource(statement: string, from: string, to: string): string {
+  if (from === to) return statement;
+  for (const q of ['"', "'"]) {
+    const needle = `${q}${from}${q}`;
+    const i = statement.indexOf(needle);
+    if (i >= 0) return `${statement.slice(0, i)}${q}${to}${q}${statement.slice(i + needle.length)}`;
+  }
+  return statement;
+}

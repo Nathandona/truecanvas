@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TruecanvasConfig } from "./config.js";
+import { assertCanvasName } from "./scaffold.js";
 
 export interface CommentAuthor {
   name: string;
@@ -42,7 +43,7 @@ export class Comments {
   constructor(private config: TruecanvasConfig) {}
 
   file(canvas: string) {
-    return path.join(this.config.root, this.config.canvasDir, `${canvas}.comments.json`);
+    return path.join(this.config.root, this.config.canvasDir, `${assertCanvasName(canvas)}.comments.json`);
   }
 
   list(canvas: string): CommentThread[] {
@@ -65,8 +66,10 @@ export class Comments {
 
   private update(canvas: string, id: string, fn: (t: CommentThread) => void) {
     const threads = this.list(canvas);
-    const t = threads.find((x) => x.id === id || x.id.startsWith(id));
-    if (!t) throw new Error(`No comment thread "${id}".`);
+    // an exact id, or an unambiguous prefix of at least 4 characters
+    const prefixed = id.length >= 4 ? threads.filter((x) => x.id.startsWith(id)) : [];
+    const t = threads.find((x) => x.id === id) ?? (prefixed.length === 1 ? prefixed[0] : undefined);
+    if (!t) throw new Error(prefixed.length > 1 ? `"${id}" matches several comment threads. Use the full id.` : `No comment thread "${id}".`);
     fn(t);
     this.save(canvas, threads);
     return t;

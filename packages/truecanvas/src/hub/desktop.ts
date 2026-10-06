@@ -39,7 +39,7 @@ CLI=${JSON.stringify(cli)}
 URL=${JSON.stringify(url)}
 LOG="\${XDG_STATE_HOME:-$HOME/.local/state}/truecanvas-hub.log"
 # apps started from the desktop don't get your shell's PATH: next, pnpm and npx need it
-export PATH=${JSON.stringify([path.dirname(process.execPath), ...(process.env.PATH ?? "").split(":")].filter((p, i, a) => p && a.indexOf(p) === i).join(":"))}
+export PATH=${JSON.stringify([path.dirname(process.execPath), ...(process.env.PATH ?? "").split(path.delimiter)].filter((p, i, a) => p && a.indexOf(p) === i).join(path.delimiter))}
 mkdir -p "$(dirname "$LOG")"
 
 if ! curl -sf "$URL/api/hub/state" >/dev/null 2>&1; then

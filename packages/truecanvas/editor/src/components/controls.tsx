@@ -72,6 +72,7 @@ export function TextField({
     editing.current = false;
     if (draft !== value) onCommit(draft);
   };
+  useFlushOnUnmount(() => editing.current && commit());
   const common = {
     value: draft,
     placeholder,
@@ -132,26 +133,26 @@ export function NumberField({
     editing.current = false;
     const trimmed = draft.trim();
     if (trimmed === "") return value !== null && onCommit(null);
-    let n: number;
-    try {
-      // allow simple math: 12*2, 100-8
-      n = /^[\d+\-*/. ()]+$/.test(trimmed) ? Number(Function(`"use strict";return (${trimmed})`)()) : Number(trimmed);
-    } catch {
-      n = Number.NaN;
-    }
+    // allow simple math: 12*2, 100-8, (24+8)/2
+    let n = evalMath(trimmed);
     if (!Number.isFinite(n)) return setDraft(value === null ? "" : String(value));
     n = clamp(Math.round(n * 100) / 100);
     setDraft(String(n));
     if (n !== value) onCommit(n);
   };
+  useFlushOnUnmount(() => editing.current && commitDraft());
   const onScrubStart = (e: React.PointerEvent) => {
     if (value === null && placeholder === undefined) return;
     e.preventDefault();
     const startX = e.clientX;
-    const start = value ?? Number(placeholder) ?? 0;
+    // "Hug", "Fill" or "Mixed" placeholders aren't numbers: scrub from 0
+    const start = value ?? numeric(placeholder) ?? 0;
     let current = start;
+    let moved = false;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - startX) < 3) return;
+      moved = true;
       current = clamp(Math.round(start + ((ev.clientX - startX) / 2) * step * (ev.shiftKey ? 10 : 1)));
       setScrub(current);
       setDraft(String(current));
@@ -160,7 +161,8 @@ export function NumberField({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setScrub(null);
-      if (current !== value) onCommit(current);
+      // a click on the label is not an edit
+      if (moved && Number.isFinite(current) && current !== value) onCommit(current);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -193,7 +195,7 @@ export function NumberField({
           }
           if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
-            const base = Number(draft || placeholder || 0);
+            const base = numeric(draft) ?? value ?? numeric(placeholder) ?? 0;
             const n = clamp(base + (e.key === "ArrowUp" ? 1 : -1) * step * (e.shiftKey ? 10 : 1));
             setDraft(String(n));
             onCommit(n);
@@ -417,17 +419,6 @@ export function Section({ title, actions, children }: { title?: ReactNode; actio
   );
 }
 
-export function useClickOutside(ref: React.RefObject<HTMLElement | null>, onOutside: () => void, active = true) {
-  useEffect(() => {
-    if (!active) return;
-    const handler = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOutside();
-    };
-    window.addEventListener("pointerdown", handler, true);
-    return () => window.removeEventListener("pointerdown", handler, true);
-  }, [ref, onOutside, active]);
-}
-
 // ---------- Color ----------
 
 /** #rgb/#rrggbb/#rrggbbaa → #rrggbb for <input type=color>; other formats stay text-only. */
@@ -459,11 +450,22 @@ export function ColorField({ value, placeholder, onCommit, ariaLabel }: { value:
   useEffect(() => setDraft(value), [value]);
   // native pickers fire on every drag step: commit once the user stops
   const timer = useRef<number>(0);
+  const picked = useRef<string | null>(null);
+  const typing = useRef(false);
   const pick = (v: string) => {
     setDraft(v);
+    picked.current = v;
     clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => onCommit(v), 250);
+    timer.current = window.setTimeout(() => {
+      picked.current = null;
+      onCommit(v);
+    }, 250);
   };
+  useFlushOnUnmount(() => {
+    clearTimeout(timer.current);
+    if (picked.current !== null) onCommit(picked.current);
+    else if (typing.current && draft !== value) onCommit(draft.trim() || null);
+  });
   return (
     <div className="field">
       <span className="prefix" style={{ paddingLeft: 5 }}>
@@ -475,8 +477,12 @@ export function ColorField({ value, placeholder, onCommit, ariaLabel }: { value:
         placeholder={placeholder}
         aria-label={ariaLabel}
         spellCheck={false}
+        onFocus={() => (typing.current = true)}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => draft !== value && onCommit(draft.trim() || null)}
+        onBlur={() => {
+          typing.current = false;
+          if (draft !== value) onCommit(draft.trim() || null);
+        }}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") (e.target as HTMLElement).blur();
@@ -541,4 +547,51 @@ export function SliderField({ value, min, max, onCommit, ariaLabel }: { value: n
       <NumberField value={Number(draft.toFixed(3))} onCommit={(v) => v !== null && onCommit(v)} ariaLabel={ariaLabel} step={step} />
     </div>
   );
+}
+
+/**
+ * Runs `flush` when the field unmounts. The inspector can disappear mid-edit
+ * (an agent changed the selection) and blur never fires then: keep what was typed.
+ */
+function useFlushOnUnmount(flush: () => void) {
+  const ref = useRef(flush);
+  ref.current = flush;
+  useEffect(() => () => ref.current(), []);
+}
+
+/** A number, or null for "", "Hug", "Mixed"… */
+function numeric(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** + - * / and parentheses, without eval (works under a strict CSP). NaN when invalid. */
+export function evalMath(input: string): number {
+  const tokens = input.match(/\d*\.?\d+|[-+*/()]/g);
+  if (!tokens || tokens.join("") !== input.replace(/\s+/g, "")) return Number.NaN;
+  let i = 0;
+  const peek = () => tokens[i];
+  const expr = (): number => {
+    let v = term();
+    while (peek() === "+" || peek() === "-") v = tokens[i++] === "+" ? v + term() : v - term();
+    return v;
+  };
+  const term = (): number => {
+    let v = factor();
+    while (peek() === "*" || peek() === "/") v = tokens[i++] === "*" ? v * factor() : v / factor();
+    return v;
+  };
+  const factor = (): number => {
+    const t = tokens[i++];
+    if (t === "-") return -factor();
+    if (t === "+") return factor();
+    if (t === "(") {
+      const v = expr();
+      return tokens[i++] === ")" ? v : Number.NaN;
+    }
+    return t !== undefined && /^\d*\.?\d+$/.test(t) ? Number(t) : Number.NaN;
+  };
+  const v = expr();
+  return i === tokens.length ? v : Number.NaN;
 }

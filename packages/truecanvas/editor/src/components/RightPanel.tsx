@@ -1,42 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowDown,
-  ArrowRight,
-  Bot,
-  Code2,
-  Component,
-  CopyPlus,
-  ExternalLink,
-  FileCode2,
-  Frame as FrameIcon,
-  LayoutList,
-  Monitor,
-  Moon,
-  Redo2,
-  RotateCcw,
-  Sparkles,
-  Sun,
-  Trash2,
-  Undo2,
-  WrapText,
-  RectangleVertical,
-  RefreshCcw,
-  Smartphone,
-  Tablet,
-  Laptop,
-  Waves,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRight, Bot, Code2, Component, CopyPlus, ExternalLink, FileCode2, Frame as FrameIcon, LayoutList, Monitor, Moon, RotateCcw, Sun, Trash2, RectangleVertical, RefreshCcw, Smartphone, Tablet, Laptop, Waves } from "lucide-react";
 import { useStore, layerName, persist, type ThemeMode } from "../lib/store";
-import { api, DEVICES, findDevice, type CanvasFrame, type CanvasNode, type ComponentSpec, type FeedEntry, type Literal, type PropSpec, type PropValue } from "../lib/api";
+import { api, DEVICES, type CanvasFrame, type CanvasNode, type ComponentSpec, type Literal, type PropSpec, type PropValue } from "../lib/api";
 import { applyUiTheme, copySelectionCode, deleteSelection, duplicateSelection, openInEditor, wrapSelection, zoomToSelection } from "../lib/actions";
-import { alignFromGrid, gridFromAlign, readLayout, setAlign, setAutoLayout, setDirection, setSpacing, setWrap } from "../lib/classes";
+
 import { ColorField, ColorList, CopyButton, NumberField, Section, Segmented, Select, SliderField, Switch, TextField, Tip } from "./controls";
 import { SHORTCUTS } from "./shortcuts";
-import { goToComponent } from "./Canvas";
+import { goToComponent } from "./CanvasMenu";
 import { MotionSection } from "./MotionSection";
 import { rawId } from "../lib/scope";
 import { StyleSections } from "./StyleSections";
 import { CommentsTab } from "./Comments";
+import { AgentTab } from "./AgentTab";
 
 export function RightPanel() {
   const tab = useStore((s) => s.rightTab);
@@ -66,15 +41,16 @@ export function RightPanel() {
   );
 }
 
+/** Agent changes since the Agent tab was last open. By id: the feed is capped, so counting its length stalls. */
 function useUnseenAgentChanges() {
   const feed = useStore((s) => s.feed);
   const tab = useStore((s) => s.rightTab);
-  const [seen, setSeen] = useState(0);
-  const agentCount = feed.filter((f) => f.actor.kind === "agent").length;
+  const [seenId, setSeenId] = useState(0);
+  const latest = feed.length ? feed[feed.length - 1].id : 0;
   useEffect(() => {
-    if (tab === "agent") setSeen(agentCount);
-  }, [tab, agentCount]);
-  return Math.max(0, agentCount - seen);
+    if (tab === "agent") setSeenId(latest);
+  }, [tab, latest]);
+  return feed.filter((f) => f.actor.kind === "agent" && f.id > seenId).length;
 }
 
 // =====================================================================
@@ -250,7 +226,7 @@ function FrameInspector({ frame }: { frame: CanvasFrame }) {
         }
         actions={
           <Tip label="Zoom to frame" kbd="⇧2">
-            <button className="icon-btn sm" onClick={zoomToSelection}>
+            <button className="icon-btn sm" aria-label="Zoom to frame" onClick={zoomToSelection}>
               <ArrowRight size={13} style={{ transform: "rotate(-45deg)" }} />
             </button>
           </Tip>
@@ -598,183 +574,4 @@ function CodeSection({ id }: { id: string }) {
       </div>
     </Section>
   );
-}
-
-// =====================================================================
-// Agent
-// =====================================================================
-
-const PROMPTS = [
-  "Look at my selection in Truecanvas and make it denser.",
-  "Create a dark-theme copy of the Chat frame and check it with a screenshot.",
-  "Show every status of SessionRow in a new variants frame.",
-  "Build an empty state for the sessions sidebar using our components.",
-  "Add a soft mesh gradient shader behind the Settings frame.",
-  "Make an iPhone 16 version of the Chat screen.",
-];
-
-function AgentTab() {
-  const agents = useStore((s) => s.agents);
-  const mcpUrl = useStore((s) => s.mcpUrl);
-  const feed = useStore((s) => s.feed);
-  const history = useStore((s) => s.history);
-  const selection = useStore((s) => s.selection);
-  const index = useStore((s) => s.index);
-  const [client, setClient] = useState<"claude" | "cursor" | "codex" | "url">("claude");
-  const snippets = {
-    claude: `claude mcp add --scope user --transport http truecanvas ${mcpUrl}`,
-    cursor: JSON.stringify({ mcpServers: { truecanvas: { url: mcpUrl } } }, null, 2),
-    codex: `[mcp_servers.truecanvas]\nurl = "${mcpUrl}"`,
-    url: mcpUrl,
-  };
-  const hints = { claude: "Run once. Works in every project.", cursor: "Add to .cursor/mcp.json", codex: "Add to ~/.codex/config.toml", url: "Streamable HTTP endpoint" };
-  const sel = selection.map((id) => index.get(id)?.node).filter(Boolean) as CanvasNode[];
-
-  return (
-    <>
-      <Section title={agents.length ? "Connected" : "Connect an agent"}>
-        {agents.length ? (
-          <div>
-            {agents.map((a) => (
-              <div key={a.session} className="agent-row">
-                <span className="live-dot" />
-                <span style={{ fontWeight: 500 }}>{agentLabel(a.name)}</span>
-                <span className="faint" style={{ marginLeft: "auto" }}>
-                  active <Ago at={a.lastSeen} />
-                </span>
-              </div>
-            ))}
-            <p className="faint" style={{ margin: "8px 0 0" }}>Agents edit the canvas file over MCP. Every change lands below and can be undone.</p>
-          </div>
-        ) : (
-          <>
-            <p className="muted" style={{ margin: "-2px 0 10px", lineHeight: "17px" }}>
-              Truecanvas has no built-in AI. Bring your own agent: it gets tools to read your components, edit frames and take screenshots.
-            </p>
-            <Segmented
-              value={client}
-              options={[
-                { value: "claude", label: "Claude" },
-                { value: "cursor", label: "Cursor" },
-                { value: "codex", label: "Codex" },
-                { value: "url", label: "URL" },
-              ]}
-              onChange={setClient}
-            />
-            <div className="code-block" style={{ marginTop: 8 }}>
-              {snippets[client]}
-              <CopyButton text={snippets[client]} />
-            </div>
-            <p className="faint" style={{ margin: "6px 0 0" }}>{hints[client]}</p>
-          </>
-        )}
-      </Section>
-
-      <Section title="Shared selection">
-        {sel.length ? (
-          <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
-            {sel.map((n) => (
-              <span key={n.id} className={`chip${n.kind === "component" ? " component" : ""}`}>
-                {layerName(n)}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="faint" style={{ margin: 0 }}>Select something and agents can read it with get_selection.</p>
-        )}
-        <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
-          {PROMPTS.map((p) => (
-            <PromptChip key={p} text={p} />
-          ))}
-        </div>
-      </Section>
-
-      <div className="section" style={{ padding: "12px 0 0" }}>
-        <div className="section-title" style={{ padding: "0 12px" }}>
-          <span>Activity</span>
-          <span className="actions" style={{ marginRight: 6 }}>
-            <Tip label="Undo" kbd="⌘Z">
-              <button className="icon-btn sm" disabled={!history.undo} onClick={() => void useStore.getState().undo()} aria-label="Undo">
-                <Undo2 size={13} />
-              </button>
-            </Tip>
-            <Tip label="Redo" kbd="⇧⌘Z">
-              <button className="icon-btn sm" disabled={!history.redo} onClick={() => void useStore.getState().redo()} aria-label="Redo">
-                <Redo2 size={13} />
-              </button>
-            </Tip>
-          </span>
-        </div>
-        <Feed entries={feed} />
-      </div>
-    </>
-  );
-}
-
-function PromptChip({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      className="btn"
-      style={{ justifyContent: "flex-start", height: "auto", padding: "6px 8px", whiteSpace: "normal", textAlign: "left", color: "var(--text-2)", lineHeight: "16px" }}
-      onClick={async () => {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      }}
-    >
-      <Sparkles size={13} style={{ flex: "none", color: "var(--agent)" }} />
-      <span>{copied ? "Copied. Paste it to your agent." : text}</span>
-    </button>
-  );
-}
-
-function Feed({ entries }: { entries: FeedEntry[] }) {
-  const canvas = useStore((s) => s.canvas);
-  const list = [...entries].reverse().slice(0, 60);
-  if (!list.length) return <div className="empty">No changes yet. Edits from you, your agent and your code editor show up here.</div>;
-  return (
-    <div className="feed">
-      {list.map((e, i) => {
-        const who = e.actor.kind === "user" ? "You" : e.actor.kind === "agent" ? agentLabel(e.actor.name) : "Code editor";
-        return (
-          <div
-            key={e.id}
-            className={`feed-item${i === 0 && Date.now() - e.at < 2000 ? " new" : ""}`}
-            onClick={() => {
-              if (e.canvas !== canvas) useStore.setState({ canvas: e.canvas });
-              else if (e.ids.length) useStore.getState().select(e.ids.filter((id) => useStore.getState().index.has(id)));
-            }}
-          >
-            <span className={`avatar ${e.actor.kind}`}>{e.actor.kind === "agent" ? <Bot size={11} /> : e.actor.kind === "file" ? <Code2 size={11} /> : "Y"}</span>
-            <div style={{ minWidth: 0 }}>
-              <div>
-                <span className="who">{who}</span> <span className="muted">{e.label.replace(/^./, (c) => c.toLowerCase())}</span>
-              </div>
-              <div className="when">
-                <Ago at={e.at} />
-                {e.canvas !== canvas && ` · ${e.canvas}`}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function agentLabel(name: string) {
-  const known: Record<string, string> = { "claude-code": "Claude Code", cursor: "Cursor", "codex-mcp-client": "Codex", codex: "Codex", "claude-ai": "Claude" };
-  return known[name] ?? name.replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
-}
-
-function Ago({ at }: { at: number }) {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 15000);
-    return () => clearInterval(t);
-  }, []);
-  const s = Math.round((Date.now() - at) / 1000);
-  const text = s < 10 ? "just now" : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
-  return <>{text}</>;
 }

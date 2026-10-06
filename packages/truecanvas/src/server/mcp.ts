@@ -2,6 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Workspace, Command, Actor, Presence } from "../core/workspace.js";
 import { findByPath, findNode } from "../core/parse.js";
+import { assertCanvasName } from "../core/scaffold.js";
+import { ICON_LIBRARIES, iconLibraries, loadIcons, searchIcons } from "../core/icons.js";
+import { addShadcnComponents, installIconLibrary, libraryState } from "../core/libraries.js";
 import { describeComponent, outlineDoc } from "../core/outline.js";
 import { readDesignTokens } from "../core/tokens.js";
 import { DEVICES, findDevice } from "../core/devices.js";
@@ -16,6 +19,7 @@ Workflow:
 3. Edit with set_props, set_text, insert_jsx, replace_node, move_node, wrap_nodes, create_frame, update_frame. Imports for catalog components are added automatically.
    Library components (e.g. Paper shaders like MeshGradient) are in the catalog too: add_background puts one behind a frame or layer, apply_preset applies a named look. Array props are plain literals: colors={["#fff", "#000"]}.
    For mobile screens create frames with a device (e.g. device="iphone-16"): the right size, plus touch + pixel-ratio emulation in screenshots.
+   Icons and shadcn/ui: list_libraries shows what's installed. install_library adds an icon set (lucide, tabler, phosphor, heroicons, radix); search_icons finds names and insert_icon places one with its import. add_shadcn_components copies shadcn/ui components into the project (setting shadcn up if needed); they then appear in list_components like any project component.
 4. screenshot_frame to check the result visually. get_selection tells you what the user has selected in the editor ("make this denser" = the selection).
 5. focus to show the user what you changed. Everything is undoable by the user.`;
 
@@ -39,6 +43,7 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
   const resolveCanvas = (canvas?: string) => {
     const c = canvas ?? lastCanvas ?? ws.selection.canvas ?? ws.canvases()[0];
     if (!c) throw new Error("No canvases yet. Use create_canvas.");
+    assertCanvasName(c);
     lastCanvas = c;
     return c;
   };
@@ -55,6 +60,7 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
     set_class: "Adjusting layout",
     insert_jsx: "Inserting",
     insert_component: "Inserting",
+    insert_icon: "Inserting",
     replace: "Rewriting",
     duplicate: "Duplicating",
     delete: "Deleting",
@@ -87,7 +93,9 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
       const c = cmd as Record<string, unknown>;
       const before = [c.id, ...(Array.isArray(c.ids) ? c.ids : []), c.parent].filter((x): x is string => typeof x === "string");
       const frameRef = typeof c.frame === "string" ? c.frame : null;
-      presence(cmd.canvas, "editing", `${VERBS[cmd.op] ?? "Editing"}…`, before.filter((x) => /^\d+:\d+$/.test(x)), frameRef ?? before.find((x) => !/^\d+:\d+$/.test(x)) ?? null);
+      // layer ids are line:col, or file#line:col on a linked page; anything else names a frame
+      const isLayerId = (x: string) => /^(?:.+#)?t?\d+:\d+$/.test(x);
+      presence(cmd.canvas, "editing", `${VERBS[cmd.op] ?? "Editing"}…`, before.filter(isLayerId), frameRef ?? before.find((x) => !isLayerId(x)) ?? null);
       const res = await ws.run(cmd, actor());
       presence(cmd.canvas, "editing", res.label, res.ids);
       const frames = new Set<string>();
@@ -726,6 +734,110 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         return text(`✓ ${(await ws.redo(resolveCanvas(canvas), actor())).label}`);
       } catch (e) {
         return fail(e);
+      }
+    },
+  );
+
+  // ---------- libraries: icon sets and shadcn/ui ----------
+  const root = ws.config.root;
+  const installedIcons = () => iconLibraries(root).filter((l) => l.version);
+
+  server.registerTool(
+    "list_libraries",
+    {
+      title: "List libraries",
+      description: "Icon libraries (installed or available) and shadcn/ui status for this project.",
+      annotations: { readOnlyHint: true },
+    },
+    () => {
+      const st = libraryState(root);
+      const icons = st.icons.map((l) => `  ${l.id.padEnd(16)} ${l.version ? `installed ${l.version}` : "not installed"}  (${l.package}${l.from !== l.package ? `, imports from ${l.from}` : ""})`);
+      const shadcn = st.shadcn.initialized ? `set up, components in ${st.shadcn.uiDir}: ${st.shadcn.installed.join(", ") || "none yet"}` : "not set up (add_shadcn_components sets it up)";
+      return text(`Package manager: ${st.packageManager}\nIcon libraries:\n${icons.join("\n")}\nshadcn/ui: ${shadcn}`);
+    },
+  );
+
+  server.registerTool(
+    "install_library",
+    {
+      title: "Install icon library",
+      description: "Install an icon library into the project with its package manager (adds a dependency).",
+      inputSchema: { library: z.enum(ICON_LIBRARIES.map((l) => l.id) as [string, ...string[]]) },
+    },
+    async ({ library }) => {
+      try {
+        const out = await installIconLibrary(root, library);
+        if (!out.ok) return fail(new Error(`Installing ${out.package} failed:\n${out.out.slice(-1500)}`));
+        return text(`✓ Installed ${out.package}. Use search_icons to find icons.`);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "search_icons",
+    {
+      title: "Search icons",
+      description: "Find icon names in an installed icon library. Without a query, lists the first icons.",
+      inputSchema: {
+        query: z.string().optional(),
+        library: z.string().optional().describe("Library id (lucide, tabler…). Defaults to the first installed one."),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, library, limit }) => {
+      try {
+        const lib = library ?? installedIcons()[0]?.id;
+        if (!lib) return fail(new Error("No icon library is installed. Use install_library (lucide is a good default)."));
+        const res = searchIcons(await loadIcons(root, lib), query ?? "", limit ?? 60);
+        if (!res.icons.length) return text(`No icons match "${query}" in ${lib}.`);
+        return text(`${res.total} match${res.total === 1 ? "" : "es"} in ${lib}${res.total > res.icons.length ? ` (first ${res.icons.length})` : ""}:\n${res.icons.map((i) => i.name).join(", ")}`);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "insert_icon",
+    {
+      title: "Insert icon",
+      description: "Insert an icon from an installed library as a child of a frame or node, with its import. className defaults to size-4.",
+      inputSchema: {
+        ...canvasArg,
+        parent: z.string(),
+        name: z.string().describe("Icon name from search_icons, e.g. Search"),
+        library: z.string().optional().describe("Library id. Defaults to the first installed one."),
+        index: z.number().int().optional(),
+        className: z.string().optional(),
+      },
+    },
+    ({ canvas, parent, name, library, index, className }) =>
+      edit(() => {
+        const lib = library ?? installedIcons()[0]?.id;
+        if (!lib) throw new Error("No icon library is installed. Use install_library first.");
+        return { op: "insert_icon", canvas: resolveCanvas(canvas), parent, name, library: lib, index, className };
+      }),
+  );
+
+  server.registerTool(
+    "add_shadcn_components",
+    {
+      title: "Add shadcn/ui components",
+      description: "Copy shadcn/ui components into the project with the shadcn CLI (sets shadcn up first if needed). They then show up in list_components.",
+      inputSchema: { names: z.array(z.string()).min(1).describe('Registry names, e.g. ["button", "card", "dialog"]') },
+    },
+    async ({ names }) => {
+      try {
+        const out = await addShadcnComponents(root, names);
+        if (!out.ok) return fail(new Error(`shadcn failed:\n${out.out.slice(-1500)}`));
+        ws.catalog.invalidate();
+        const already = names.filter((n) => !out.added.includes(n));
+        return text(`✓ ${out.added.length ? `Added ${out.added.join(", ")}` : "Nothing new to add"}${already.length ? ` (already there: ${already.join(", ")})` : ""}. Use list_components to see their props.`);
+      } catch (err) {
+        return fail(err);
       }
     },
   );

@@ -10,26 +10,11 @@ import path from "node:path";
  * and the agent config files.
  */
 
-export type Pm = "npm" | "pnpm" | "yarn" | "bun";
-
-/** The project's package manager: its lockfile, else the one running us (npx, pnpm dlx…), else npm. */
-export function detectPm(dir: string): Pm {
-  for (let d = dir; ; d = path.dirname(d)) {
-    if (fs.existsSync(path.join(d, "pnpm-lock.yaml")) || fs.existsSync(path.join(d, "pnpm-workspace.yaml"))) return "pnpm";
-    if (fs.existsSync(path.join(d, "yarn.lock"))) return "yarn";
-    if (fs.existsSync(path.join(d, "bun.lock")) || fs.existsSync(path.join(d, "bun.lockb"))) return "bun";
-    if (fs.existsSync(path.join(d, "package-lock.json"))) return "npm";
-    if (path.dirname(d) === d || fs.existsSync(path.join(d, ".git"))) break;
-  }
-  const agent = process.env.npm_config_user_agent ?? "";
-  if (agent.startsWith("pnpm")) return "pnpm";
-  if (agent.startsWith("yarn")) return "yarn";
-  if (agent.startsWith("bun")) return "bun";
-  return "npm";
-}
+export { detectPm, type Pm } from "../core/pm.js";
+import { addArgs, toolEnv, type Pm } from "../core/pm.js";
 
 export function addDevArgs(pm: Pm, spec: string): string[] {
-  return pm === "npm" ? ["install", "-D", spec] : pm === "bun" ? ["add", "-d", spec] : ["add", "-D", spec];
+  return addArgs(pm, [spec], true);
 }
 
 /** `npm run canvas` in the project's own words. */
@@ -42,7 +27,7 @@ export type Exec = (cmd: string, args: string[], cwd: string) => Promise<void>;
 /** Runs a command with its output passed through (CLI) . */
 export const execInherit: Exec = (cmd, args, cwd) =>
   new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, stdio: "inherit", env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}` } });
+    const p = spawn(cmd, args, { cwd, stdio: "inherit", env: toolEnv() });
     p.on("error", reject);
     p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} ${args.join(" ")} exited with ${code}`))));
   });

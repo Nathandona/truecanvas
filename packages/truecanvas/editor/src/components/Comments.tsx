@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Check, CheckCircle2, CornerDownLeft, MessageCircle, Trash2, Undo2 } from "lucide-react";
-import { agentColor, useStore, type Camera } from "../lib/store";
+import { agentColor, useStore, type Camera, agentLabel } from "../lib/store";
 import { api, type CommentThread, type CanvasFrame } from "../lib/api";
 import { fitBounds, frameHeight } from "../lib/actions";
 import { loadComments } from "../lib/sync";
-import { agentLabel } from "./RightPanel";
 import { Tip } from "./controls";
-
-function ago(t: number) {
-  const s = (Date.now() - t) / 1000;
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
+import { ago } from "../lib/time";
 
 export function Avatar({ author, size = 22 }: { author: { name: string; kind: "user" | "agent" }; size?: number }) {
   const agent = author.kind === "agent";

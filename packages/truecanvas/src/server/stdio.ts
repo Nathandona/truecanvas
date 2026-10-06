@@ -10,25 +10,32 @@ import { INSTRUCTIONS } from "./mcp.js";
  * client name is forwarded so the editor shows who is editing.
  */
 export async function runStdioBridge(mcpUrl: string) {
-  let ready!: (c: Client) => void;
-  let failed!: (e: unknown) => void;
-  const upstream = new Promise<Client>((res, rej) => {
-    ready = res;
-    failed = rej;
-  });
-
   const server = new Server({ name: "truecanvas", version: "0.1.0" }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
-  server.oninitialized = async () => {
-    try {
+  let client: Promise<Client> | null = null;
+  // connects on first use, and again after the editor restarts
+  const connect = () => {
+    if (!client) {
       const info = server.getClientVersion();
-      const client = new Client({ name: info?.name ?? "stdio-agent", version: info?.version ?? "0.0.0" });
-      await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
-      ready(client);
-    } catch (err) {
-      failed(err);
+      const c = new Client({ name: info?.name ?? "stdio-agent", version: info?.version ?? "0.0.0" });
+      const pending = c.connect(new StreamableHTTPClientTransport(new URL(mcpUrl))).then(() => c);
+      pending.catch(() => client === pending && (client = null));
+      client = pending;
+    }
+    return client;
+  };
+  const withUpstream = async <T,>(fn: (c: Client) => Promise<T>): Promise<T> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn(await connect());
+      } catch (err) {
+        client = null;
+        // only a lost session is retried: a timeout may have applied an edit already
+        const lost = /session|not connected|ECONNREFUSED|ECONNRESET|fetch failed|404/i.test((err as Error).message ?? "");
+        if (attempt > 0 || !lost) throw err;
+      }
     }
   };
-  server.setRequestHandler(ListToolsRequestSchema, async () => (await upstream).listTools());
-  server.setRequestHandler(CallToolRequestSchema, async (req) => (await upstream).callTool(req.params) as never);
+  server.setRequestHandler(ListToolsRequestSchema, () => withUpstream((c) => c.listTools()));
+  server.setRequestHandler(CallToolRequestSchema, (req) => withUpstream((c) => c.callTool(req.params, undefined, { timeout: 180_000 })) as never);
   await server.connect(new StdioServerTransport());
 }

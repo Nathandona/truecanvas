@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import MagicString from "magic-string";
+import { parseModule } from "./ast.js";
 import path from "node:path";
 import type { TruecanvasConfig } from "./config.js";
 
@@ -36,16 +38,7 @@ export function initProject(config: TruecanvasConfig): InitReport {
     report.done.push(`${path.basename(status.file)} already uses withTruecanvas()`);
   } else {
     const src = fs.readFileSync(status.file, "utf8");
-    const esm = /export\s+default\s+/.test(src);
-    const cjs = /module\.exports\s*=\s*/.test(src);
-    let next: string | null = null;
-    if (esm) {
-      next = src.replace(/export\s+default\s+([\s\S]+?);?\s*$/, (_m, expr: string) => `export default withTruecanvas(${expr.trim().replace(/;$/, "")});\n`);
-      next = addImport(next, `import { withTruecanvas } from "truecanvas/next";`);
-    } else if (cjs) {
-      next = src.replace(/module\.exports\s*=\s*([\s\S]+?);?\s*$/, (_m, expr: string) => `module.exports = withTruecanvas(${expr.trim().replace(/;$/, "")});\n`);
-      next = `const { withTruecanvas } = require("truecanvas/next");\n${next}`;
-    }
+    const next = wrapConfigExport(src);
     if (next && next !== src && next.includes("withTruecanvas(")) {
       fs.writeFileSync(status.file, next);
       report.done.push(`Wrapped ${path.basename(status.file)} with withTruecanvas()`);
@@ -116,4 +109,42 @@ function addImport(src: string, line: string): string {
   while (at > 0 && at < lines.length && !/;\s*$|from\s+["'][^"']+["']\s*;?\s*$/.test(lines[at - 1])) at++;
   lines.splice(at, 0, line);
   return lines.join("\n");
+}
+
+/**
+ * Wraps a next.config's export in withTruecanvas(), touching only the exported
+ * expression: comments and code after it stay as they are. Null when the
+ * export can't be found (the user is told to wrap it by hand).
+ */
+export function wrapConfigExport(src: string): string | null {
+  let ast;
+  try {
+    ast = parseModule(src);
+  } catch {
+    return null;
+  }
+  const s = new MagicString(src);
+  for (const stmt of ast.program.body) {
+    if (stmt.type === "ExportDefaultDeclaration") {
+      const d = stmt.declaration;
+      if (d.type === "FunctionDeclaration" && d.id) {
+        // export default function config(phase) {…}: keep the function, export it wrapped
+        s.remove(stmt.start!, d.start!);
+        s.appendLeft(stmt.end!, `\n\nexport default withTruecanvas(${d.id.name});`);
+      } else if (d.type === "FunctionDeclaration" || d.type === "ArrowFunctionExpression" || d.type.endsWith("Expression") || d.type === "Identifier") {
+        s.appendLeft(d.start!, "withTruecanvas(");
+        s.appendRight(d.end!, ")");
+      } else return null;
+      return addImport(s.toString(), `import { withTruecanvas } from "truecanvas/next";`);
+    }
+    if (stmt.type === "ExpressionStatement" && stmt.expression.type === "AssignmentExpression") {
+      const { left, right } = stmt.expression;
+      const isModuleExports = left.type === "MemberExpression" && left.object.type === "Identifier" && left.object.name === "module" && left.property.type === "Identifier" && left.property.name === "exports";
+      if (!isModuleExports) continue;
+      s.appendLeft(right.start!, "withTruecanvas(");
+      s.appendRight(right.end!, ")");
+      return `const { withTruecanvas } = require("truecanvas/next");\n${s.toString()}`;
+    }
+  }
+  return null;
 }

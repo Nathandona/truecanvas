@@ -18,8 +18,14 @@ export function canvasNameOf(file: string) {
   return path.basename(file).slice(0, -CANVAS_SUFFIX.length);
 }
 
-export function canvasPath(config: TruecanvasConfig, name: string) {
+/** Canvas names become file names: letters, digits, - and _ only (never a path). */
+export function assertCanvasName(name: string): string {
   if (!/^[a-z0-9][a-z0-9-_]*$/i.test(name)) throw new Error(`Invalid canvas name "${name}". Use letters, digits, - and _.`);
+  return name;
+}
+
+export function canvasPath(config: TruecanvasConfig, name: string) {
+  assertCanvasName(name);
   return path.join(config.root, config.canvasDir, `${name}${CANVAS_SUFFIX}`);
 }
 
