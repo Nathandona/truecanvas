@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
 import { EditError } from "./edit.js";
@@ -95,6 +94,7 @@ export class Git {
     }
     // -z: NUL-separated and unquoted, so paths with spaces or accents come back as-is
     const out = await git(this.cwd, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."]);
+    const prefix = await this.prefix();
     const s: GitStatus = { repo: true, root, branch: null, unborn: false, upstream: null, ahead: 0, behind: 0, files: [], user: null, defaultBranch: null, remote: null };
     const entries = out.split("\0");
     for (let i = 0; i < entries.length; i++) {
@@ -112,10 +112,10 @@ export class Git {
         const file = parts.slice(line.startsWith("2 ") ? 9 : 8).join(" ");
         if (line.startsWith("2 ")) i++;
         const code = xy.replace(".", "")[0] ?? "M";
-        s.files.push({ path: this.rel(root, file), status: code === "A" ? "added" : code === "D" ? "deleted" : code === "R" ? "renamed" : "modified", staged: xy[0] !== "." });
+        s.files.push({ path: this.rel(prefix, file), status: code === "A" ? "added" : code === "D" ? "deleted" : code === "R" ? "renamed" : "modified", staged: xy[0] !== "." });
       } else if (line.startsWith("u ")) {
-        s.files.push({ path: this.rel(root, line.split(" ").slice(10).join(" ")), status: "conflicted", staged: false });
-      } else if (line.startsWith("? ")) s.files.push({ path: this.rel(root, line.slice(2)), status: "untracked", staged: false });
+        s.files.push({ path: this.rel(prefix, line.split(" ").slice(10).join(" ")), status: "conflicted", staged: false });
+      } else if (line.startsWith("? ")) s.files.push({ path: this.rel(prefix, line.slice(2)), status: "untracked", staged: false });
     }
     s.user = (await git(this.cwd, ["config", "user.name"]).catch(() => "")).trim() || null;
     s.remote = (await git(this.cwd, ["remote", "get-url", "origin"]).catch(() => "")).trim() || null;
@@ -240,20 +240,17 @@ export class Git {
   }
 
   /** git reports paths from the repo root; we show them from the project root. */
-  private rel(root: string, file: string) {
-    return posix(path.relative(this.realCwd(), path.join(root, file)));
+  private rel(prefix: string, file: string) {
+    return file.startsWith(prefix) ? file.slice(prefix.length) : posix(path.posix.relative(prefix, file));
   }
 
   /**
-   * The project folder as git sees it: git reports real paths, so a folder
-   * reached through a symlink (macOS /var → /private/var) must be resolved too.
+   * The project folder inside the repo ("apps/web/", or "" at the root), as git
+   * itself sees it. Asking git instead of comparing file system paths holds up
+   * through symlinks (macOS /var → /private/var), junctions and Windows short names.
    */
-  private realCwd(): string {
-    try {
-      return fs.realpathSync(this.cwd);
-    } catch {
-      return this.cwd;
-    }
+  private async prefix(): Promise<string> {
+    return (await git(this.cwd, ["rev-parse", "--show-prefix"]).catch(() => "")).trim();
   }
 
   async branches(): Promise<{ current: string | null; local: string[]; remote: string[] }> {
@@ -289,8 +286,7 @@ export class Git {
 
   /** A file's content at a ref, or null if it doesn't exist there. */
   async show(ref: string, file: string): Promise<string | null> {
-    const root = (await git(this.cwd, ["rev-parse", "--show-toplevel"])).trim();
-    const inRepo = path.relative(root, path.join(this.realCwd(), file)).split(path.sep).join("/");
+    const inRepo = path.posix.normalize(`${await this.prefix()}${posix(file)}`);
     return git(this.cwd, ["show", `${safeRef(ref)}:${inRepo}`, "--"]).catch(() => null);
   }
 

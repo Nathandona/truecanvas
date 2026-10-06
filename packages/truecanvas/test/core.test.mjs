@@ -766,7 +766,7 @@ test("shadcn: status reads components.json and the ui folder through the import 
   fs.writeFileSync(path.join(proj, "components.json"), JSON.stringify({ aliases: { ui: "@/components/ui" } }));
   fs.mkdirSync(path.join(proj, "src/components/ui"), { recursive: true });
   for (const f of ["button.tsx", "card.tsx", "utils.ts"]) fs.writeFileSync(path.join(proj, "src/components/ui", f), "");
-  assert.deepEqual(shadcnStatus(proj), { initialized: true, uiDir: path.join("src", "components", "ui"), installed: ["button", "card"] });
+  assert.deepEqual(shadcnStatus(proj), { initialized: true, uiDir: "src/components/ui", installed: ["button", "card"] });
 });
 
 test("git: status keeps unusual paths intact, reports renames and conflicts, rejects option-like refs", async () => {
