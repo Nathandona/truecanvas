@@ -79,7 +79,7 @@ before(() => {
   fs.writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true, paths: { "@/*": ["./*"] } } }));
   fs.writeFileSync(path.join(root, "components/button.tsx"), BUTTON);
   // real React types, like a real project
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(root, "node_modules"), "junction");
+  fs.symlinkSync(fs.realpathSync(path.resolve("../../examples/playground/node_modules")), path.join(root, "node_modules"), "junction");
   reset();
 });
 
@@ -353,8 +353,8 @@ export const glowPresets = [
     fs.unlinkSync(path.join(root, "node_modules"));
   } catch {}
   fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/react"), path.join(root, "node_modules/react"), "junction");
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules/@types"), path.join(root, "node_modules/@types"), "junction");
+  fs.symlinkSync(fs.realpathSync(path.resolve("../../examples/playground/node_modules/react")), path.join(root, "node_modules/react"), "junction");
+  fs.symlinkSync(fs.realpathSync(path.resolve("../../examples/playground/node_modules/@types")), path.join(root, "node_modules/@types"), "junction");
   fs.symlinkSync(path.join(local, "fake-shaders"), path.join(root, "node_modules/fake-shaders"), "junction");
   reset();
   await ws.catalog.load();
@@ -697,7 +697,7 @@ test("icons: installed libraries render to SVG, insert with an import, alias on 
   fs.mkdirSync(path.join(proj, "canvas"));
   fs.mkdirSync(path.join(proj, "node_modules/lucide-react"), { recursive: true });
   fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ dependencies: { "lucide-react": "1.0.0" } }));
-  for (const dep of ["react", "react-dom"]) fs.symlinkSync(path.resolve(`../../examples/playground/node_modules/${dep}`), path.join(proj, "node_modules", dep), "junction");
+  for (const dep of ["react", "react-dom"]) fs.symlinkSync(fs.realpathSync(path.resolve(`../../examples/playground/node_modules/${dep}`)), path.join(proj, "node_modules", dep), "junction");
   // shaped like lucide: icons plus `XIcon` and `LucideX` aliases and a generic `Icon`
   fs.writeFileSync(path.join(proj, "node_modules/lucide-react/package.json"), JSON.stringify({ name: "lucide-react", version: "1.0.0", type: "module", main: "index.js" }));
   fs.writeFileSync(
@@ -872,7 +872,7 @@ function project(canvasBody, files = {}) {
   for (const dir of ["canvas", "components", "app"]) fs.mkdirSync(path.join(proj, dir));
   fs.writeFileSync(path.join(proj, "package.json"), "{}");
   fs.writeFileSync(path.join(proj, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true, paths: { "@/*": ["./*"] } } }));
-  fs.symlinkSync(path.resolve("../../examples/playground/node_modules"), path.join(proj, "node_modules"), "junction");
+  fs.symlinkSync(fs.realpathSync(path.resolve("../../examples/playground/node_modules")), path.join(proj, "node_modules"), "junction");
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(proj, rel)), { recursive: true });
     fs.writeFileSync(path.join(proj, rel), content);
