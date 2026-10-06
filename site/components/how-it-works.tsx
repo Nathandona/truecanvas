@@ -34,7 +34,7 @@ export function HowItWorks() {
         <Reveal stagger={0.08} className="flex flex-col gap-5 md:sticky md:top-28 md:self-start">
           <h2 className="text-4xl font-semibold tracking-tight text-balance">Running in your app in about a minute.</h2>
           <p className="text-[15px] leading-relaxed text-muted">
-            Works in Next.js (App Router) and Vite + React apps with Tailwind, on macOS, Linux and Windows, with Node 20 or newer. Production builds are untouched.
+            Works in Next.js (App Router) and Vite + React apps with Tailwind, on macOS, Linux and Windows, with Node 22 or newer. Production builds are untouched.
           </p>
           <div className="flex flex-col items-start gap-3 pt-2">
             <CommandPill command="npx truecanvas" />

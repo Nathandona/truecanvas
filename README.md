@@ -235,7 +235,7 @@ On Linux, `⌘` is `Ctrl`. Pan with space-drag, middle mouse or two-finger scrol
 
 ## Requirements
 
-- Node 20+, React 19, and Next.js 15.3+ (App Router) or Vite 5+. Tailwind is optional but the style controls write Tailwind classes.
+- Node 22+ (24 LTS recommended), React 19, and Next.js 15.3+ (App Router) or Vite 5+. Tailwind is optional but the style controls write Tailwind classes.
 - Linux, macOS and Windows (CI runs on all three; the desktop launcher entry is Linux-only).
 - For screenshots and PR images: Chrome, Edge or Chromium, or a Playwright browser (`npx playwright install chromium-headless-shell`). Set `TRUECANVAS_CHROME` to point at one.
 - For pull requests: the GitHub CLI (`gh auth login`).

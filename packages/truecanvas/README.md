@@ -22,19 +22,19 @@ Truecanvas renders your actual `.tsx` components on an infinite canvas, lets you
 - **Mobile presets.** iPhone, Pixel, Galaxy, iPad and desktop frame sizes, with device chrome (status bar, Dynamic Island, home indicator) and touch emulation in agent screenshots.
 - **Everything is undoable.** Edits from you, your agent and your code editor land in one activity feed with undo/redo.
 - **Light, dark, system.** Per-frame theme (Inherit / Light / Dark) and a canvas-wide theme, applied live without reloading frames.
-- **Lightweight.** No second dev server. Frames render through your existing `next dev`, the editor is a static bundle, and headless Chromium only starts when an agent asks for a screenshot.
+- **Lightweight.** No second dev server. Frames render through your existing dev server (`next dev` or `vite`), the editor is a static bundle, and headless Chromium only starts when an agent asks for a screenshot.
 
-> Status: early (v0.1). Next.js App Router + Tailwind first. Linux-first, tested on Fedora 43.
+> Status: early. Next.js (App Router) and Vite + React, Tailwind first. Linux, macOS and Windows.
 
 ## Quick start
 
-**In a Next.js app** (App Router, Next 15.3+):
+**In a Next.js app** (App Router, Next 15.3+) **or a Vite + React app** (Vite 5+):
 
 ```bash
 npx truecanvas
 ```
 
-That's it. The first time, it asks once, then adds the dev dependency, wraps `next.config`, adds a `canvas` script, links your homepage as the first canvas and offers to connect your agents. Then it starts your app (if it isn't running) and opens the editor. After that, anyone on the project starts it with `npm run canvas`.
+That's it. The first time, it asks once, then adds the dev dependency, enables its plugin in `next.config` (or `vite.config`), adds a `canvas` script, links your homepage as the first canvas and offers to connect your agents. Then it starts your app (if it isn't running) and opens the editor. After that, anyone on the project starts it with `npm run canvas`.
 
 **A new app:**
 
@@ -44,6 +44,8 @@ cd my-app && npm run canvas
 ```
 
 A Next.js app (TypeScript, Tailwind, App Router) with Truecanvas set up and committed. `pnpm create truecanvas`, `yarn create truecanvas` and `bun create truecanvas` work too.
+
+**Vite apps.** The `truecanvas()` plugin (added to `vite.config` for you) stamps ids and serves frames at `/truecanvas/<canvas>`, with the stylesheets your entry module imports (`src/main.tsx` → `index.css`) and the `<link>` tags of your `index.html`. Set `"css": ["/src/styles.css"]` in `truecanvas.config.json` to choose them yourself. Main component frames, Assets, agents and screenshots work as in Next; linked page frames need Next's file-based routes. Production builds are untouched.
 
 **Something off?** `npx truecanvas doctor` checks Node, Next, React, Tailwind, the config, agents, screenshots and git, with a one-line fix for each problem.
 
@@ -74,7 +76,7 @@ npx truecanvas desktop   # adds Truecanvas to your app launcher (GNOME, KDE…)
 npx truecanvas hub       # or start it from a terminal
 ```
 
-One window for all your projects, with tabs like a browser. The **Dashboard** lists your recent projects (with their favicons) and the Next.js apps it finds on your computer. You can open a folder, set up Truecanvas in an existing app, or create a new project. Each tab is a project's editor. Opening a tab starts that project's app on free ports, and closing it stops the app and frees the memory (the tab bar shows how much is in use).
+One window for all your projects, with tabs like a browser. The **Dashboard** lists your recent projects (with their favicons) and the Next.js and Vite apps it finds on your computer. You can open a folder, set up Truecanvas in an existing app, or create a new project. Each tab is a project's editor. Opening a tab starts that project's app on free ports, and closing it stops the app and frees the memory (the tab bar shows how much is in use).
 
 The hub serves MCP at the same `http://localhost:4800/mcp`, and your agent works on the project in the active tab. It can also call `list_projects` and `open_project` to switch itself.
 
@@ -84,7 +86,7 @@ Everything Truecanvas makes is a file in your repo: canvases, comments, linked p
 
 ### The workflow
 
-1. **Set up once, commit it.** `npx truecanvas` in the repo, then commit `package.json`, `canvas/`, `next.config` and `.mcp.json`. Teammates run their usual install and `npm run canvas`; their agents are already connected.
+1. **Set up once, commit it.** `npx truecanvas` in the repo, then commit `package.json`, `canvas/`, `next.config` (or `vite.config`) and `.mcp.json`. Teammates run their usual install and `npm run canvas`; their agents are already connected.
 2. **Design on real pages.** Linked frames are your production pages: editing them edits `page.tsx`. For bigger ideas, right-click → **Explore a copy**, iterate freely (you or your agent), then **Apply to page**. Delete explorations once applied.
 3. **One branch per change.** On `main`, Truecanvas offers to start a branch and brings your edits along.
 4. **Commit from the Git panel.** It lists what changed per frame in plain words and drafts the message.
@@ -233,9 +235,9 @@ On Linux, `⌘` is `Ctrl`. Pan with space-drag, middle mouse or two-finger scrol
 
 ## Requirements
 
-- Node 20+, Next.js 15.3+ (App Router), React 19. Tailwind is optional but the style controls write Tailwind classes.
-- Linux and macOS. Windows is untested.
-- For screenshots and PR images: Chrome/Chromium, or a Playwright browser in `~/.cache/ms-playwright`. Set `TRUECANVAS_CHROME` to point at one.
+- Node 22+ (24 LTS recommended), React 19, and Next.js 15.3+ (App Router) or Vite 5+. Tailwind is optional but the style controls write Tailwind classes.
+- Linux, macOS and Windows (CI runs on all three; the desktop launcher entry is Linux-only).
+- For screenshots and PR images: Chrome, Edge or Chromium, or a Playwright browser (`npx playwright install chromium-headless-shell`). Set `TRUECANVAS_CHROME` to point at one.
 - For pull requests: the GitHub CLI (`gh auth login`).
 
 `npx truecanvas doctor` checks all of this.

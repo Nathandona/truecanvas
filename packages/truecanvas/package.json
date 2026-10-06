@@ -100,7 +100,7 @@
     "components"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "homepage": "https://truecanvas.dev",
   "repository": {

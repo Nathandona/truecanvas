@@ -26,7 +26,7 @@ export async function doctor(root: string, cliVersion: string): Promise<Check[]>
   const add = (c: Check) => checks.push(c);
 
   const node = process.versions.node;
-  add(major(node) >= 20 ? { label: "Node.js", status: "ok", detail: node } : { label: "Node.js", status: "fail", detail: node, fix: "Install Node.js 20 or newer (https://nodejs.org)" });
+  add(major(node) >= 22 ? { label: "Node.js", status: "ok", detail: node } : { label: "Node.js", status: "fail", detail: node, fix: "Install Node.js 22 or newer (24 LTS recommended: https://nodejs.org)" });
 
   const pkg = readPackage(root);
   if (!pkg) {
