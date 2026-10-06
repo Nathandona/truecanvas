@@ -1,6 +1,6 @@
 {
   "name": "create-truecanvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Create a Next.js app with Truecanvas set up: npm create truecanvas",
   "license": "MIT",
   "type": "module",
