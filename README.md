@@ -91,7 +91,23 @@ export default function ChatCanvas() {
 2. Each frame loads `/truecanvas/<canvas>` from your dev server, where a small runtime maps what's under the pointer back to that position.
 3. Your gestures and your agent's MCP calls become the same commands. The server patches the source and your dev server hot-reloads the frame.
 
-Collaboration goes through git: canvases, comments and linked pages are files, so design changes are branched, reviewed and merged like code. The **Truecanvas window** (`npx truecanvas open`) manages several projects in tabs, clones from GitHub and reviews pull requests on the canvas.
+## MCP tools
+
+| | Tools |
+| --- | --- |
+| Read | `list_canvases` `get_canvas` `get_node` `get_selection` `list_components` `get_component` `get_design_tokens` `list_comments` |
+| Edit | `insert_jsx` `replace_node` `set_props` `set_text` `set_class_name` `move_node` `duplicate_nodes` `delete_nodes` `wrap_nodes` `undo` `redo` |
+| Frames and pages | `create_frame` `update_frame` `create_variants_frame` `create_canvas` `rename_canvas` `delete_canvas` `import_page` `explore_copy` `apply_to_page` |
+| Components and libraries | `create_component` `open_component` `list_libraries` `install_library` `search_icons` `insert_icon` `add_shadcn_components` |
+| Look and show | `screenshot_frame` `focus` `play_frame` `add_animation` `remove_animation` `add_background` `apply_preset` `reply_comment` `resolve_comment` |
+
+Node ids are the JSX tag's `line:col` and change after edits; every write returns the fresh ids. Catalog components are imported automatically.
+
+## Collaborate
+
+Canvases, comments and linked pages are files in your repo, so design changes are branched, reviewed and merged like code. From the Git panel you can branch, commit with a per-frame summary, open a pull request with before/after images, and compare against any branch or commit. Comments are saved with the canvas and agents can read and resolve them.
+
+The **Truecanvas window** (`npx truecanvas open`) manages several projects in tabs, clones from GitHub and reviews pull requests on the canvas.
 
 ## Configuration
 

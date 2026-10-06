@@ -62,7 +62,7 @@ export function HowItWorks() {
                 <span className="text-white/40">$ </span>
                 <span className="text-white">npx truecanvas</span>
                 {"\n\n  "}
-                <span className="text-coral">◆</span> <span className="font-semibold text-white">Truecanvas</span> <span className="text-white/40">v0.2.0</span>
+                <span className="text-coral">◆</span> <span className="font-semibold text-white">Truecanvas</span> <span className="text-white/40">v0.3.0</span>
                 {"\n\n"}
                 {"  This adds Truecanvas to "}
                 <span className="font-semibold text-white">acme-web</span>
