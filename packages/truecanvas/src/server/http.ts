@@ -26,6 +26,7 @@ import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
 import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
 import { CommentSync } from "../share/sync.js";
+import { Sessions } from "../share/session.js";
 import { assertCanvasName } from "../core/scaffold.js";
 
 const MIME: Record<string, string> = {
@@ -80,6 +81,19 @@ export async function startServer(ws: Workspace) {
     for (const res of clients) res.write(data);
   };
   ws.on(broadcast);
+  // live sessions on share links: the room's events go to the editor (cursors, who's here),
+  // and a comment written on the link is pulled in right away instead of at the next poll
+  const sendRaw = (e: unknown) => {
+    const data = `data: ${JSON.stringify(e)}\n\n`;
+    for (const res of clients) res.write(data);
+  };
+  const sessions = new Sessions(path.basename(config.root), config.appUrl, {
+    onEvent: (canvas, e) => {
+      if (e.t === "comments") void commentSync.syncAll();
+      else sendRaw({ type: "room", canvas, event: e });
+    },
+    onState: (s) => sendRaw({ type: "session", session: s }),
+  });
   setInterval(() => {
     for (const res of clients) res.write(": ping\n\n");
     ws.pruneAgents();
@@ -122,7 +136,7 @@ export async function startServer(ws: Workspace) {
           ws.dropAgent(sid);
         }
       };
-      const server = createMcpServer(ws, shots, () => sid);
+      const server = createMcpServer(ws, shots, () => sid, sessions);
       await server.connect(t);
       transport = t;
     }
@@ -454,6 +468,25 @@ export async function startServer(ws: Workspace) {
         if (published) commentSync.forget(canvas);
         return json(res, 200, { manifest, preview, published });
       }
+      // live sessions: clients follow the canvas live on its link (editor button, CLI, MCP, desktop tray)
+      case "GET /api/session":
+        return json(res, 200, { sessions: sessions.list() });
+      case "POST /api/session/start": {
+        const { canvas, name } = (await readJson(req)) as { canvas: string; name?: string };
+        assertCanvasName(canvas);
+        return json(res, 200, { session: await sessions.start(canvas, { name }) });
+      }
+      case "POST /api/session/stop": {
+        const { canvas } = (await readJson(req)) as { canvas: string };
+        return json(res, 200, { stopped: sessions.stop(canvas) });
+      }
+      case "POST /api/session/cursor": {
+        // the studio's cursor in the editor, in canvas coordinates (null: it left the canvas)
+        const { canvas, x, y } = (await readJson(req)) as { canvas: string; x: number | null; y: number | null };
+        const on = typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y);
+        sessions.get(canvas)?.cursor(on ? x : null, on ? y : null);
+        return json(res, 200, { ok: true });
+      }
       case "POST /api/source": {
         const { canvas, id } = (await readJson(req)) as { canvas: string; id: string };
         const hit = ws.nodeSource(canvas, id);
@@ -601,6 +634,7 @@ export async function startServer(ws: Workspace) {
   });
 
   const shutdown = async () => {
+    sessions.stopAll();
     commentSync.stop();
     await shots.close();
     for (const t of transports.values()) await t.close().catch(() => {});

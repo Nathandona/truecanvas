@@ -3,10 +3,11 @@ import { viewerHtml } from "truecanvas/share";
 import { accessCookie, checkPassword, hashPassword, hasAccess, isStudio } from "./auth";
 import type { ReviewEnv } from "./env";
 import { brand, esc, home, json, notFound, page } from "./http";
-import { isLiveHost, liveHome, liveUrl, serveLive, typeOf } from "./live";
+import { isLiveHost, liveHome, liveUrl, serveLive, sessionUrl, typeOf } from "./live";
 import { createInvite, isEmail, isInvited, listInvites, normalEmail, removeInvite } from "./people";
 import { authHandler, signInOn, viewerOf, type Viewer } from "./session";
 import { sendInvitation, signedIn, signInPage, signOutForm } from "./signin";
+import { joinRoom, notifyRoom, roomState } from "./rooms";
 import {
   ACCESS,
   addThread,
@@ -43,15 +44,19 @@ import {
  *   /api/shares/<slug>/versions       studio: publish a version
  *   /api/shares/<slug>/comments       studio: comments sync
  *   /api/shares/<slug>/invites        studio: invite people to a link, list or remove them
+ *   /api/shares/<slug>/room           studio: the link's room (WebSocket), as a live session's host
  *   /api/auth/...                     sign-in (Better Auth): email links, sessions
  *   /signin, /continue, /i/<token>    signing in, by email link or invitation (signin.ts)
  *   /members, /links                  the studio's members and links
- *   /s/<slug>/...                     clients: viewer, frames, password, comments
+ *   /s/<slug>/...                     clients: viewer, frames, password, comments, room
  *   <key>-<version><LIVE_HOST_SUFFIX> clients: a version's live site
+ *   <key>-session<LIVE_HOST_SUFFIX>   clients: the studio's app, during a live session
  */
 
+export { Room } from "./room";
+
 /** What this site can do beyond the original API. Truecanvas checks it before using them. */
-const features = (env: ReviewEnv) => ["live-url", ...(env.LIVE_HOST_SUFFIX ? ["live-files"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
+const features = (env: ReviewEnv) => ["live-url", "room", ...(env.LIVE_HOST_SUFFIX ? ["live-files", "session"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
 
 export default {
   async fetch(req: Request, env: ReviewEnv): Promise<Response> {
@@ -109,6 +114,14 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
 
   const share = await getShare(env, parts[0]);
   if (!share) return notFound();
+  // the link's room: Truecanvas joins it as the live session's host, or reads who's there
+  if (parts[1] === "room" && parts.length === 2 && req.method === "GET") {
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return json(await roomState(env, share.slug));
+    const q = new URL(req.url).searchParams;
+    const host = q.get("host") === "1";
+    if (host && !env.LIVE_HOST_SUFFIX) return json({ error: "This review site doesn't host live sessions (LIVE_HOST_SUFFIX isn't set)." }, 400);
+    return joinRoom(env, share.slug, { name: q.get("name") || brand(env).name || "Studio", kind: "studio", route: q.get("route") ?? undefined }, host);
+  }
   // /invites/<email>: one invitation
   if (parts[1] === "invites" && parts.length === 3 && req.method === "DELETE") {
     return (await removeInvite(env, share.slug, parts[2])) ? json({ ok: true }) : notFound();
@@ -219,6 +232,7 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
         ...(typeof body.resolved === "boolean" ? { resolved: body.resolved, by: { name: String(body.name || "Studio").slice(0, 60), kind: "studio" as const } } : {}),
         at,
       });
+      if (ok) await notifyRoom(env, share.slug, { t: "comments", updated: at });
       return ok ? json({ ok: true }) : notFound();
     }
   }
@@ -253,6 +267,15 @@ async function link(req: Request, env: ReviewEnv, slug: string, path: string[]):
   }
   if (path.length === 1 && path[0] === "manifest.json") return json(manifest(req, env, share, new URL(req.url).searchParams.get("v"), gate.viewer ?? (await viewerOf(req, env))));
   if (path.length === 1 && path[0] === "comments.json") return json({ threads: await listThreads(env, slug) });
+  if (path.length === 1 && path[0] === "room") {
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return notFound();
+    // same site only: another site can't open someone's room with their cookies
+    const from = req.headers.get("origin");
+    if (from && from !== new URL(req.url).origin) return notFound();
+    const viewer = gate.viewer ?? (await viewerOf(req, env));
+    const typed = (new URL(req.url).searchParams.get("name") ?? "").trim().slice(0, 60);
+    return joinRoom(env, slug, viewer ? { name: viewer.name, kind: viewer.member ? "studio" : "client" } : { name: typed || "Guest", kind: "client" }, false);
+  }
 
   if (path[0] === "v" && path.length >= 4) {
     const [, version, kind, ...rest] = path;
@@ -318,7 +341,11 @@ async function linkPost(req: Request, env: ReviewEnv, share: Share | null, path:
     if (!text || !name) return json({ error: "Write a comment and your name." }, 400);
     const now = Date.now();
     const message: CommentMessage = { id: newId(), author: { name, kind: viewer?.member ? "studio" : "client" }, text, at: now };
-    if (path.length === 2) return (await applyToThread(env, slug, path[1], { message, at: now })) ? json({ ok: true, message }) : notFound();
+    if (path.length === 2) {
+      if (!(await applyToThread(env, slug, path[1], { message, at: now }))) return notFound();
+      await notifyRoom(env, slug, { t: "comments", updated: now });
+      return json({ ok: true, message });
+    }
     if (!share.versions.length) return notFound();
     const version = share.versions.find((v) => v.id === body.version) ?? share.versions[share.versions.length - 1];
     const frame = version.frames.find((f) => f.name === body.frame);
@@ -339,6 +366,7 @@ async function linkPost(req: Request, env: ReviewEnv, share: Share | null, path:
     } catch (err) {
       return json({ error: (err as Error).message }, 429);
     }
+    await notifyRoom(env, slug, { t: "comments", updated: now });
     return json({ ok: true, thread });
   }
   if (share.access !== "password" || !share.password || path.join("/") !== "unlock") return notFound();
@@ -352,6 +380,7 @@ function manifest(req: Request, env: ReviewEnv, share: Share, wanted: string | n
   const versions = [...share.versions].sort((a, b) => b.createdAt - a.createdAt);
   const current = versions.find((v) => v.id === wanted) ?? versions[0];
   const live = liveUrl(env, req, share, current);
+  const session = sessionUrl(env, req, share);
   return {
     format: 1,
     project: share.project,
@@ -364,6 +393,9 @@ function manifest(req: Request, env: ReviewEnv, share: Share, wanted: string | n
     brand: brand(env),
     comments: true,
     ...(live ? { live: { url: live } } : {}),
+    // the link's room (presence, real-time comments), and where a live session serves the studio's app
+    room: true,
+    ...(session ? { session: { url: session } } : {}),
     // who's looking: their comments carry this name. `signIn`: the site has sign-in (for a "Sign in" link)
     viewer: viewer ? { name: viewer.name, email: viewer.email, studio: viewer.member } : null,
     signIn: signInOn(env),

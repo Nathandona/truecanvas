@@ -1,6 +1,8 @@
 import { LIVE_COOKIE, checkLiveToken, hasLiveAccess, liveCookieValue, liveToken, lockOf } from "./auth";
 import type { ReviewEnv } from "./env";
 import { notFound, page } from "./http";
+import { safePath } from "truecanvas/share";
+import { tunnel } from "./rooms";
 import { getShareByKey, livePath, type Share, type Version } from "./store";
 
 /*
@@ -30,12 +32,31 @@ export function liveUrl(env: ReviewEnv, req: Request, share: Share, version: Ver
   return url.href;
 }
 
+/** A version id for the session host: its access token and cookie are scoped to it. */
+const SESSION = "session";
+
+/**
+ * Where the studio's app is served during a live session: the link's session
+ * host, with a token that opens it for a viewer that has access. Null when the
+ * site doesn't host live sites.
+ */
+export function sessionUrl(env: ReviewEnv, req: Request, share: Share): string | null {
+  const suffix = env.LIVE_HOST_SUFFIX;
+  if (!suffix) return null;
+  const here = new URL(req.url);
+  const url = new URL(`${here.protocol}//${share.key}-${SESSION}${suffix}${here.port ? `:${here.port}` : ""}/`);
+  if (lockOf(share)) url.searchParams.set("tc_access", liveToken(env, share.slug, SESSION));
+  return url.href;
+}
+
 /** Is this request for a live site? */
 export const isLiveHost = (env: ReviewEnv, url: URL) => !!env.LIVE_HOST_SUFFIX && url.hostname.endsWith(env.LIVE_HOST_SUFFIX.split(":")[0]);
 
 export async function serveLive(req: Request, env: ReviewEnv): Promise<Response> {
   const url = new URL(req.url);
   const label = url.hostname.slice(0, -env.LIVE_HOST_SUFFIX!.split(":")[0].length);
+  const s = /^([a-z0-9]{10})-session$/.exec(label);
+  if (s) return serveSession(req, env, s[1]);
   const m = /^([a-z0-9]{10})-(\d{8})(\d{6})$/.exec(label);
   if (!m || (req.method !== "GET" && req.method !== "HEAD")) return notFound();
   const share = await getShareByKey(env, m[1]);
@@ -76,6 +97,36 @@ export async function serveLive(req: Request, env: ReviewEnv): Promise<Response>
   const missing = livePath(share.slug, versionId, "404.html");
   const fallback = missing ? await env.FILES.get(missing) : null;
   return fallback ? file(fallback, "/404.html", 404, req.method === "HEAD") : notFound();
+}
+
+/**
+ * The session host: the studio's app, tunneled from its Truecanvas while a
+ * live session runs. Same gate as a version's live site: the viewer's token,
+ * traded for a cookie on this host. The app's HMR WebSockets come through too.
+ */
+async function serveSession(req: Request, env: ReviewEnv, key: string): Promise<Response> {
+  const url = new URL(req.url);
+  const share = await getShareByKey(env, key);
+  if (!share || share.revoked) return gone(env);
+  const lock = lockOf(share);
+  const token = url.searchParams.get("tc_access");
+  if (token !== null && lock && req.headers.get("upgrade") === null) {
+    if (!checkLiveToken(env, share.slug, SESSION, token)) return locked(env);
+    url.searchParams.delete("tc_access");
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: url.pathname + url.search,
+        "set-cookie": `${LIVE_COOKIE}=${liveCookieValue(env, share.slug, SESSION, lock)}; Path=/; Max-Age=${60 * 60 * 12}; HttpOnly; Secure; SameSite=None`,
+        "cache-control": "no-store",
+      },
+    });
+  }
+  if (!hasLiveAccess(req, env, share.slug, SESSION, lock)) return locked(env);
+  if (!["GET", "HEAD", "POST"].includes(req.method)) return new Response("Method not allowed", { status: 405 });
+  const path = safePath(url.pathname + url.search);
+  if (!path) return notFound();
+  return tunnel(env, share.slug, req, path);
 }
 
 function file(object: R2ObjectBody, path: string, status: number, head: boolean) {

@@ -1,5 +1,7 @@
 export interface ReviewEnv {
   DB: D1Database;
+  /** one room per link: presence, real-time comments and the live session's tunnel (room.ts) */
+  ROOM: DurableObjectNamespace<import("./room").Room>;
   FILES: R2Bucket;
   /** the studio's token (secret): Truecanvas uploads and manages links with it */
   REVIEW_TOKEN: string;

@@ -31,6 +31,12 @@
   },
   // Email Service: sign-in links and invitations
   "send_email": [{ "name": "EMAIL" }],
+  // One room per link (src/room.ts): presence, real-time comments and live
+  // sessions. SQLite-backed Durable Objects are on the Workers free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
   // Your domains go in wrangler.local.jsonc (see README), e.g.:
   // "routes": [
   //   { "pattern": "review.example.com", "custom_domain": true },

@@ -12,6 +12,7 @@ import { DEVICES, findDevice } from "../core/devices.js";
 import type { Screenshotter } from "./screenshot.js";
 import { createSnapshot } from "../share/snapshot.js";
 import { parseEmails, publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
+import type { Sessions } from "../share/session.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
 A canvas is a .tsx file (canvas/<name>.canvas.tsx) with <Frame> artboards; every edit you make is written to that file as clean TSX and appears live in the user's editor window.
@@ -29,7 +30,7 @@ Workflow:
 const literal = z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.union([z.string(), z.number(), z.boolean()]))]);
 const deviceIds = DEVICES.map((d) => d.id) as [string, ...string[]];
 
-export function createMcpServer(ws: Workspace, shots: Screenshotter, session: () => string) {
+export function createMcpServer(ws: Workspace, shots: Screenshotter, session: () => string, sessions?: Sessions) {
   const server = new McpServer({ name: "truecanvas", version: "0.1.0" }, { instructions: INSTRUCTIONS });
 
   const actor = (): Actor => {
@@ -727,6 +728,44 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             .filter(Boolean)
             .join("\n"),
         );
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "start_session",
+    {
+      title: "Start a live session",
+      description:
+        "Start a live session on a canvas's share link: while it runs, people with access to the link see the real frames from the app (not the frozen snapshot), they update as the canvas is edited, everyone sees each other's cursors, and comments arrive instantly. The canvas must have been shared once (share_canvas). It runs until stop_session or until Truecanvas stops. Only start one when the user asks.",
+      inputSchema: { ...canvasArg },
+    },
+    async ({ canvas }) => {
+      try {
+        if (!sessions) throw new Error("Live sessions run from the Truecanvas server (npx truecanvas).");
+        const c = resolveCanvas(canvas);
+        const s = await sessions.start(c);
+        return text(`✓ Live session started on ${c}: ${s.url}\nPeople with access to the link now see the frames live. Stop it with stop_session.`);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "stop_session",
+    {
+      title: "Stop a live session",
+      description: "Stop a canvas's live session: the link goes back to its latest published version.",
+      inputSchema: { ...canvasArg },
+    },
+    async ({ canvas }) => {
+      try {
+        if (!sessions) throw new Error("Live sessions run from the Truecanvas server (npx truecanvas).");
+        const c = resolveCanvas(canvas);
+        return text(sessions.stop(c) ? `✓ Stopped the live session on ${c}.` : `${c} has no live session.`);
       } catch (e) {
         return fail(e);
       }
