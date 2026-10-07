@@ -13,6 +13,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: [22, 24]
+    env:
+      # the desktop app's Electron binary: not needed to test the packages
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,6 +26,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter truecanvas typecheck
       - run: pnpm build
+      # after the build: it types against truecanvas/hub's declarations
+      - run: pnpm --filter truecanvas-desktop typecheck
       - run: pnpm test
       # the package installs and its CLI runs
       - run: cd packages/truecanvas && npm pack && node dist/cli.js --version

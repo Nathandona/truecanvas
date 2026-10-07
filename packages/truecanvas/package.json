@@ -24,6 +24,10 @@
       "types": "./dist/share/index.d.ts",
       "default": "./dist/share/index.js"
     },
+    "./hub": {
+      "types": "./dist/hub.d.ts",
+      "default": "./dist/hub.js"
+    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"

@@ -110,6 +110,8 @@ Canvases, comments and linked pages are files in your repo, so design changes ar
 
 The **Truecanvas window** (`npx truecanvas open`) manages several projects in tabs, clones from GitHub and reviews pull requests on the canvas.
 
+The **desktop app** (Linux AppImage and deb, from the [releases](https://github.com/Nathandona/truecanvas/releases)) is the same window, installed: it runs in the tray, starts each project's dev server with your own Node when you open it and stops it after 30 minutes unused, notifies you when a client comments on a share link, can start at login, and updates itself.
+
 ## Share with clients
 
 **Share** (top right in the editor), `npx truecanvas share <canvas>`, or your agent's `share_canvas` renders every frame through your app and freezes it into static HTML and CSS: no scripts, so a link can never call your API or leak a session. It's published to your own review site as a new version of that page's link. Clients open it in any browser, with an optional password, and pin comments on the frames. Their threads sync into the canvas's comments while Truecanvas runs; your replies and your agent's (`reply_comment`, `resolve_comment`) go back to the link, under your studio's name. Comments you start in Truecanvas stay internal. `--revoke` takes a link down and `--delete` removes it with its comments.

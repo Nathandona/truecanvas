@@ -37,8 +37,10 @@ interface Project {
 interface HubState {
   origin: string;
   active: string | null;
-  /** the CLI asked to show this project (`truecanvas` run inside it) */
-  focus: { path: string; at: number } | null;
+  /** the CLI asked to show this project (`truecanvas` run inside it), or a notification, with one of its canvases */
+  focus: { path: string; at: number; canvas?: string } | null;
+  /** a problem to show at the top (the desktop app: Node isn't installed) */
+  notice?: string | null;
   projects: Project[];
 }
 interface Job {
@@ -124,11 +126,15 @@ export function HubApp() {
   // `truecanvas` run in a project folder while the window is open: switch to its tab
   // (requests from before this window opened aren't news)
   const seenFocus = useRef(Date.now());
+  // a canvas to show in a project's tab: its editor reloads on it
+  const [canvasFor, setCanvasFor] = useState<Record<string, { canvas: string; at: number }>>({});
   useEffect(() => {
     const f = state?.focus;
     if (!f || f.at <= seenFocus.current || !open.some((p) => p.path === f.path)) return;
     seenFocus.current = f.at;
     setTab(f.path);
+    const canvas = f.canvas;
+    if (canvas) setCanvasFor((m) => ({ ...m, [f.path]: { canvas, at: f.at } }));
   }, [state, open]);
   const activeName = open.find((x) => x.path === tab)?.name;
   useEffect(() => {
@@ -260,12 +266,18 @@ export function HubApp() {
       <main className="hub-body">
         {tab === "dashboard" && state && <Dashboard state={state} onOpen={openProject} refresh={refresh} />}
         {open.map((p) => (
-          <ProjectView key={p.path} project={p} visible={tab === p.path} onRetry={() => void openProject(p)} />
+          <ProjectView key={p.path} project={p} visible={tab === p.path} canvas={canvasFor[p.path]} onRetry={() => void openProject(p)} />
         ))}
         {!connected && (
           <div className="banner" role="status" style={{ top: 12 }}>
             <LoaderCircle size={14} className="spin-working" />
             <div className="muted">Lost connection to Truecanvas. Reconnecting…</div>
+          </div>
+        )}
+        {state?.notice && !error && (
+          <div className="banner" role="alert" style={{ top: 12 }}>
+            <AlertTriangle size={14} className="warn" />
+            <div>{state.notice}</div>
           </div>
         )}
         {error && (
@@ -341,11 +353,12 @@ function QuitDialog({ running, onCancel, onQuit }: { running: string[]; onCancel
   );
 }
 
-function ProjectView({ project, visible, onRetry }: { project: Project; visible: boolean; onRetry: () => void }) {
+function ProjectView({ project, visible, canvas, onRetry }: { project: Project; visible: boolean; canvas?: { canvas: string; at: number }; onRetry: () => void }) {
   const run = project.running!;
+  const src = canvas ? `${run.editor}/?canvas=${encodeURIComponent(canvas.canvas)}` : `${run.editor}/`;
   return (
     <div className="project-view" style={{ display: visible ? "block" : "none" }}>
-      {run.status === "ready" && <iframe title={project.name} src={`${run.editor}/`} allow="clipboard-read; clipboard-write" />}
+      {run.status === "ready" && <iframe key={canvas?.at} title={project.name} src={src} allow="clipboard-read; clipboard-write" />}
       {run.status === "starting" && (
         <div className="hub-center">
           <LoaderCircle size={22} className="spin-working" />

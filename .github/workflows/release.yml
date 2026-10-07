@@ -28,7 +28,7 @@ jobs:
       - name: Versions match the tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          for p in packages/truecanvas packages/create-truecanvas; do
+          for p in packages/truecanvas packages/create-truecanvas packages/desktop; do
             v=$(node -p "require('./$p/package.json').version")
             [ "$v" = "$tag" ] || { echo "$p is $v, tag is $tag"; exit 1; }
           done
@@ -48,3 +48,27 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+
+  desktop:
+    # The desktop app for Linux (AppImage and deb), attached to the release.
+    # electron-updater reads latest-linux.yml from it to update installed apps.
+    # macOS and Windows join once signing is set up.
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build the AppImage and deb
+        run: pnpm --filter truecanvas-desktop dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/desktop/release/*.AppImage
+            packages/desktop/release/*.deb
+            packages/desktop/release/latest-linux.yml
