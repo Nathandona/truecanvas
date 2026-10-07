@@ -1,6 +1,6 @@
 # Truecanvas review site (Cloudflare)
 
-A studio's review site for Truecanvas share links, on Cloudflare Workers with D1 and R2. Clients open a link, look at the frozen frames, pin comments, and open the live site with **View live**. Same API as the Vercel version in `packages/review`: Truecanvas works with either.
+A studio's review site for Truecanvas share links, on Cloudflare Workers with D1, R2 and Durable Objects. Clients open a link, look at the frozen frames, pin comments, open the live site with **View live**, and follow the studio's work in **live sessions**. Same API as the Vercel version in `packages/review`: Truecanvas works with either.
 
 Cloudflare's free plan covers it (Workers, D1, R2 up to 10 GB) and allows commercial use.
 
@@ -80,6 +80,20 @@ npx truecanvas share home --live https://preview.example.com   # where the app a
 A static build is any folder with an `index.html`: Next.js with `output: "export"` (`out/`), Vite (`dist/`). It's uploaded with the version; older versions keep theirs. Clean URLs and `404.html` work as on any static host. When the link has a password, the live site does too: the viewer hands the client a short-lived token, which the live host trades for a cookie.
 
 Agents pass the same thing to `share_canvas` as `live`.
+
+## Live sessions
+
+While a session runs, everyone with access to the link sees the canvas live from the studio's app instead of the frozen frames, and the frames follow the studio's edits (the dev server's hot reload comes through). Everyone sees who's here and each other's cursors, and comments arrive as they're written.
+
+```sh
+npx truecanvas share home --session      # until Ctrl+C; the canvas needs a link first
+```
+
+The editor's **Go live** button (next to Share), the desktop app's tray, and agents (`start_session`, `stop_session`) start and stop it too.
+
+How it works: each link has a room, a Durable Object (`src/room.ts`) holding the people looking at it over WebSockets. The studio's Truecanvas joins it as the session's host with the studio token. Viewers' requests to the link's session host, `<key>-session<LIVE_HOST_SUFFIX>`, are tunneled through the room to Truecanvas, which answers from the project's dev server only: paths, never another host or port. The session host has the same gate as live sites. When the studio stops (or goes offline), viewers fall back to the latest published version.
+
+It needs `LIVE_HOST_SUFFIX` and its routes (step 1), and the `ROOM` Durable Object, declared in `wrangler.jsonc`: copy its `durable_objects` and `migrations` blocks into `wrangler.local.jsonc`. The first deploy with them creates the class. On the free plan an idle room costs nothing (WebSocket hibernation); each tunneled request counts as a Worker request plus a Durable Object request, so a page of a Next.js dev server (around 20 to 100 files) uses that many of the 100,000 daily requests of each.
 
 ## Moving from the Vercel version
 

@@ -118,6 +118,8 @@ The **desktop app** (Linux AppImage and deb, from the [releases](https://github.
 
 Add `--live <dir|url>` (or `live` in `share_canvas`) and clients also get **View live** on each frame: the real site at that frame's width, animations and interactions included. Pass a static build (Next `out/`, Vite `dist/`) for the review site to host, or the URL where the app already runs.
 
+On the Cloudflare review site, **Go live** (next to Share), `npx truecanvas share <canvas> --session` or your agent's `start_session` opens a **live session**: everyone with access to the link sees the canvas live from your app, updating as you edit, with each other's cursors and comments arriving as they're written. Stop it and the link shows the latest published version again.
+
 On the Cloudflare review site with sign-in, `--invite client@company.com` emails your client an invitation: they sign in with a link, no password, and comment under their name. New links are for invited people and your studio; `--access password|public` changes that, and `--link-only` invites or changes access without a new version.
 
 You deploy the review site once, on your own domain:

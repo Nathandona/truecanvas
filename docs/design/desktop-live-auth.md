@@ -1,6 +1,6 @@
 # Desktop app, sign-in and live sessions: technical design
 
-Status: in progress (2026-10-07). Sign-in (milestone 2) built on the Cloudflare review site. First user: Altair studio, sharing work in progress with its clients.
+Status: milestones 1 to 3 built (2026-10-07): the desktop app, sign-in and live sessions on the Cloudflare review site. First user: Altair studio, sharing work in progress with its clients.
 
 ## Goal
 
@@ -42,6 +42,15 @@ One Durable Object per link (a **room**), on the review Worker. SQLite-backed Du
 - **Live frames**: when the studio starts a session, Truecanvas connects to the room as its **host** with the studio token. The room forwards viewers' requests for the app to the host over that WebSocket (a reverse tunnel); the host fetches them from the project's dev server and streams the answer back. HMR WebSockets are forwarded too, so viewers' frames update as the studio edits. In a session the viewer swaps frozen frames for live ones, served from the link's own live host, so the app never shares an origin with the review site.
 - **Security**: the tunnel only reaches the project's app (never the Truecanvas editor or its API), only for signed-in members of the link, and only while the studio keeps the session open. Messages over 1 MB are chunked.
 - **When the studio is offline**, the link shows the latest published version, as today.
+
+As built:
+
+- **Hosts**: the session host is `<key>-session<LIVE_HOST_SUFFIX>`, under the same wildcard route and certificate as version live sites, and behind the same hand-off (a short-lived token from the viewer's manifest, traded for a cookie on that host). Viewers join the room at `/s/<slug>/room` (same-origin only); Truecanvas joins at `/api/shares/<slug>/room?host=1` with the studio token in a header, never in the URL.
+- **Frames** (`share/wire.ts`, shared by both sides): text messages are presence and events (JSON); binary messages are tunnel frames, `[4-byte header length][JSON header][payload]`: `req` (+ `req-body`, `req-end`), `res` (+ `res-body`, `res-end`, `res-error`), `ws-open`, `ws-msg`, `ws-close`. Bodies travel in 256 KiB chunks; the host waits for its socket to drain past 4 MiB, a request waits 30 s for its first answer, and request bodies stop at 10 MiB.
+- **What reaches the app**: GET, HEAD, POST and WebSocket upgrades, on absolute paths only (`safePath` refuses full URLs, `//host`, backslashes, encoded slashes and control characters), resolved against the app's URL and checked to stay on its origin. The review site's cookies (`tc_*`), proxy headers and `Origin` stay behind; redirects to the app's own origin are made relative.
+- **Viewer**: in a session, frames on the latest version become live iframes of the app's frame route (`/truecanvas/<canvas>?frame=<name>`, the one the editor uses) on the session host, sandboxed with scripts on their own origin; the frozen image stays underneath until each loads. A Live badge and faces show who's here; cursors are drawn in canvas coordinates, sent at most every 45 to 50 ms.
+- **Studio side**: one session per canvas in the project's Truecanvas (`share/session.ts`), started from the editor (Go live), `truecanvas share <canvas> --session`, MCP `start_session` and `stop_session`, or the hub's `POST /api/hub/session` (the desktop tray: start or stop on the active project's open canvas). It reconnects with backoff; another Truecanvas starting a session on the same link takes it over. A comment event from the room triggers an immediate comment sync.
+- **Keep-alive**: clients send `ping` every 30 s and the room answers `pong` without waking up (`setWebSocketAutoResponse`).
 
 ## Milestones
 

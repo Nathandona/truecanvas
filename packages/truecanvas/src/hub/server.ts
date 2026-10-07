@@ -395,8 +395,13 @@ export async function startHub(opts: HubOptions) {
       case "POST /api/hub/session": {
         // { action: start | stop | toggle, path?: the project (default the active one), canvas? }
         const action = body.action === "start" || body.action === "stop" ? body.action : "toggle";
-        const sessions = await sessionAction(action, body.path ? String(body.path) : active, body.canvas ? String(body.canvas) : undefined);
-        return json(res, 200, { sessions });
+        try {
+          const sessions = await sessionAction(action, body.path ? String(body.path) : active, body.canvas ? String(body.canvas) : undefined);
+          return json(res, 200, { sessions });
+        } catch (err) {
+          // not open, no link yet, no review site: the tray shows the reason
+          return json(res, 400, { error: (err as Error).message });
+        }
       }
       case "POST /api/hub/quit":
         json(res, 200, { ok: true });
