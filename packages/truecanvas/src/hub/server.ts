@@ -37,6 +37,15 @@ export interface HubNotice {
   text: string;
 }
 
+/** A project's live session, as its Truecanvas reports it (share/session.ts). */
+export interface HubSession {
+  canvas: string;
+  status: "connecting" | "live" | "reconnecting" | "stopped";
+  url: string;
+  error: string | null;
+  people: { id: string; name: string; kind: "client" | "studio"; color: string }[];
+}
+
 export interface HubOptions {
   port: number;
   /** the truecanvas CLI that starts projects without their own copy */
@@ -93,14 +102,53 @@ export async function startHub(opts: HubOptions) {
   /** a request (from the CLI, or a notification) to show a project's tab in the window, and maybe one of its canvases */
   let focus: { path: string; at: number; canvas?: string } | null = null;
 
+  // ---------- live sessions: each project's Truecanvas runs its own; the hub asks it ----------
+  /** A running project's live sessions (empty when it isn't running or doesn't answer quickly). */
+  async function sessionsOf(dir: string): Promise<HubSession[]> {
+    const r = runner.running.get(dir);
+    if (!r || r.status !== "ready") return [];
+    try {
+      const res = await fetch(`http://localhost:${r.editorPort}/api/session`, { signal: AbortSignal.timeout(800) });
+      return res.ok ? ((await res.json()) as { sessions: HubSession[] }).sessions.filter((s) => s.status !== "stopped") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Starts or stops a project's live session (the active project by default):
+   * "toggle" stops it when one runs, else starts one on the canvas open in its
+   * editor (or `canvas`).
+   */
+  async function sessionAction(action: "start" | "stop" | "toggle", dir = active, canvas?: string): Promise<HubSession[]> {
+    if (!dir) throw new Error("Open a project first.");
+    const r = runner.running.get(dir);
+    if (!r || r.status !== "ready") throw new Error("Open the project first: its Truecanvas runs the session.");
+    const live = await sessionsOf(dir);
+    const start = action === "start" || (action === "toggle" && !live.length);
+    const res = await fetch(`http://localhost:${r.editorPort}/api/session/${start ? "start" : "stop"}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(canvas ? { canvas } : {}),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
+    used(dir);
+    broadcast();
+    return sessionsOf(dir);
+  }
+
   async function state() {
     const memory = await runner.memory();
+    const running = [...runner.running.keys()];
+    const live = await Promise.all(running.map(async (dir) => [dir, await sessionsOf(dir)] as const));
     return {
       origin,
       active,
       focus,
       notice: opts.notice ?? null,
-      liveSession: { available: false },
+      liveSession: { available: true, sessions: Object.fromEntries(live.filter(([, s]) => s.length)) as Record<string, HubSession[]> },
       projects: store.all().map((p) => {
         const r = runner.running.get(p.path);
         return { ...p, running: r ? { status: r.status, editor: `http://localhost:${r.editorPort}`, app: `http://localhost:${r.appPort}`, error: r.error, memory: memory[p.path] ?? null } : null };
@@ -344,8 +392,12 @@ export async function startHub(opts: HubOptions) {
         opts.onNotice?.({ path: p.path, project: p.name, canvas: String(body.canvas), name: String(body.name).slice(0, 80), text: String(body.text ?? "").slice(0, 300) });
         return json(res, 200, { ok: true });
       }
-      case "POST /api/hub/session":
-        return json(res, 501, { error: "Live sessions arrive with sign-in on the review site." });
+      case "POST /api/hub/session": {
+        // { action: start | stop | toggle, path?: the project (default the active one), canvas? }
+        const action = body.action === "start" || body.action === "stop" ? body.action : "toggle";
+        const sessions = await sessionAction(action, body.path ? String(body.path) : active, body.canvas ? String(body.canvas) : undefined);
+        return json(res, 200, { sessions });
+      }
       case "POST /api/hub/quit":
         json(res, 200, { ok: true });
         if (opts.onQuit) return opts.onQuit();
@@ -418,11 +470,14 @@ export async function startHub(opts: HubOptions) {
       focus = { path: dir, at: Date.now(), ...(canvas ? { canvas } : {}) };
       broadcast();
     },
-    /** milestone 3: start or stop a live session for the active project */
+    /** live sessions: clients follow a project's open canvas live on its share link */
     liveSession: {
-      available: false as boolean,
-      async toggle(): Promise<void> {
-        throw new Error("Live sessions arrive with sign-in on the review site.");
+      available: true as boolean,
+      /** the project's running sessions (the active project by default) */
+      sessions: (dir: string | null = active) => (dir ? sessionsOf(dir) : Promise.resolve([] as HubSession[])),
+      /** stops the project's session if one runs, else starts one on the canvas open in its editor */
+      async toggle(dir: string | null = active, canvas?: string): Promise<HubSession[]> {
+        return sessionAction("toggle", dir, canvas);
       },
     },
   };

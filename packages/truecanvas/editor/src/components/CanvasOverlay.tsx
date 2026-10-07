@@ -5,6 +5,7 @@ import { useStore, layerName, type Rect } from "../lib/store";
 import { frameHeight, playFrame, replayFrame } from "../lib/actions";
 import { findDevice, type CanvasFrame } from "../lib/api";
 import { AgentCursors } from "./AgentCursors";
+import { RoomCursors } from "./LiveSession";
 import { changeBadge, comparePlacement } from "./Compare";
 import { CommentLayer } from "./Comments";
 
@@ -185,6 +186,7 @@ export function Overlay({
 
       <CommentLayer camera={camera} framePos={framePos} />
       <AgentCursors camera={camera} framePos={framePos} />
+      <RoomCursors camera={camera} />
     </div>
   );
 

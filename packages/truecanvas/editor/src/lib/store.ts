@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { fromServer, scopeDoc, unscopeCommand } from "./scope";
-import { api, type PageReview, type PullRequest, type CommentThread, type FrameChange, type GitStatus, type TokenData, type Presence, type AgentInfo, type CanvasDoc, type CanvasFrame, type CanvasNode, type Command, type ComponentSpec, type DarkMode, type FeedEntry } from "./api";
+import { api, type PageReview, type PullRequest, type CommentThread, type FrameChange, type GitStatus, type TokenData, type Presence, type AgentInfo, type CanvasDoc, type CanvasFrame, type CanvasNode, type Command, type ComponentSpec, type DarkMode, type FeedEntry, type RoomPerson, type SessionState } from "./api";
 
 export type Tool = "select" | "frame" | "hand" | "interact" | "comment";
 export type ThemeMode = "system" | "light" | "dark";
@@ -112,6 +112,10 @@ interface State {
   flashes: Flash[];
   /** live agent cursors, by MCP session */
   presence: Record<string, Presence>;
+  /** live sessions on share links, by canvas */
+  sessions: Record<string, SessionState>;
+  /** people in a live session's room (clients, other studio members), by id, with their cursor */
+  roomPeople: Record<string, RoomPerson & { canvas: string; x: number | null; y: number | null }>;
   pages: { name: string; frames: number }[];
   /** layer keys (path + name) hidden / locked in the editor only */
   hidden: Set<string>;
@@ -219,6 +223,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   toasts: [],
   flashes: [],
   presence: {},
+  sessions: {},
+  roomPeople: {},
   pages: [],
   hidden: new Set(),
   locked: new Set(),

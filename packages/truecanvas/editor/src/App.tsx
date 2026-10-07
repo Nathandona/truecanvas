@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { AlertCircle, LoaderCircle, RefreshCw } from "lucide-react";
-import { api, subscribe, type ServerEvent } from "./lib/api";
+import { api, subscribe, type RoomEvent, type ServerEvent } from "./lib/api";
 import { useStore, agentLabel, type Camera } from "./lib/store";
 import { refreshRects } from "./lib/bridge";
 import { applyUiTheme, cachedHeights, cameraShowsFrames, revealOnCanvas, setCamera, startAutoFit } from "./lib/actions";
@@ -60,6 +60,7 @@ export function App() {
     const prPoll = setInterval(() => loadPr(), 60000);
     const onFocus = () => loadGit(0);
     window.addEventListener("focus", onFocus);
+    loadSessions();
     const off = subscribe(
       onEvent,
       (c) => useStore.setState({ connected: c }),
@@ -254,11 +255,51 @@ async function resync() {
   loadPages();
   loadComments();
   loadGit(0);
+  loadSessions();
+}
+
+/** Live sessions running when the editor opens (or reconnects). */
+export function loadSessions() {
+  void api
+    .sessions()
+    .then(({ sessions }) => useStore.setState({ sessions: Object.fromEntries(sessions.filter((x) => x.status !== "stopped").map((x) => [x.canvas, x])) }))
+    .catch(() => {});
+}
+
+/** A live session's room: who's in it, and where their cursors are. */
+function onRoom(canvas: string, e: RoomEvent) {
+  const people = { ...useStore.getState().roomPeople };
+  const me = useStore.getState().sessions[canvas]?.you;
+  if (e.t === "hello") {
+    for (const [id, p] of Object.entries(people)) if (p.canvas === canvas) delete people[id];
+    for (const p of e.people) if (p.id !== e.you.id) people[p.id] = { ...p, canvas, x: null, y: null };
+  } else if (e.t === "join") {
+    if (e.person.id !== me) people[e.person.id] = { ...e.person, canvas, x: null, y: null };
+  } else if (e.t === "leave") delete people[e.id];
+  else if (e.t === "cursor") {
+    const p = people[e.id];
+    if (!p) return;
+    people[e.id] = { ...p, x: e.x, y: e.y };
+  } else return;
+  useStore.setState({ roomPeople: people });
 }
 
 function onEvent(e: ServerEvent) {
   const s = useStore.getState();
   switch (e.type) {
+    case "session": {
+      const sessions = { ...s.sessions };
+      if (e.session.status === "stopped") {
+        delete sessions[e.session.canvas];
+        const people = Object.fromEntries(Object.entries(s.roomPeople).filter(([, p]) => p.canvas !== e.session.canvas));
+        useStore.setState({ sessions, roomPeople: people });
+        if (e.session.error) s.toast(e.session.error);
+      } else useStore.setState({ sessions: { ...sessions, [e.session.canvas]: e.session } });
+      break;
+    }
+    case "room":
+      onRoom(e.canvas, e.event);
+      break;
     case "comments":
       if (e.canvas === s.canvas) loadComments();
       break;

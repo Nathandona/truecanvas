@@ -122,6 +122,9 @@ export class LiveSession {
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     let opened = false;
+    // idle sockets are dropped after about 100 s: the room answers "ping" without waking up
+    const keepAlive = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send("ping"), 30_000);
+    keepAlive.unref?.();
     socket.onopen = () => {
       opened = true;
       this.backoff = 1000;
@@ -132,6 +135,7 @@ export class LiveSession {
       else void this.onFrame(m.data as ArrayBuffer);
     };
     socket.onclose = (e) => {
+      clearInterval(keepAlive);
       if (this.socket !== socket) return;
       this.socket = null;
       this.cleanup();
@@ -172,6 +176,7 @@ export class LiveSession {
   }
 
   private onText(data: string) {
+    if (data === "pong") return;
     let e: RoomEvent;
     try {
       e = JSON.parse(data) as RoomEvent;

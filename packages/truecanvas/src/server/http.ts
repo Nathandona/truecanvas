@@ -472,13 +472,20 @@ export async function startServer(ws: Workspace) {
       case "GET /api/session":
         return json(res, 200, { sessions: sessions.list() });
       case "POST /api/session/start": {
-        const { canvas, name } = (await readJson(req)) as { canvas: string; name?: string };
+        // no canvas (the desktop tray): the one open in the editor
+        const body = (await readJson(req)) as { canvas?: string; name?: string };
+        const canvas = body.canvas ?? ws.selection.canvas ?? ws.canvases()[0];
+        if (!canvas) return json(res, 400, { error: "No canvas to share live yet." });
         assertCanvasName(canvas);
-        return json(res, 200, { session: await sessions.start(canvas, { name }) });
+        return json(res, 200, { session: await sessions.start(canvas, { name: body.name }) });
       }
       case "POST /api/session/stop": {
-        const { canvas } = (await readJson(req)) as { canvas: string };
-        return json(res, 200, { stopped: sessions.stop(canvas) });
+        // no canvas: every session of the project
+        const { canvas } = (await readJson(req)) as { canvas?: string };
+        if (canvas) return json(res, 200, { stopped: sessions.stop(canvas) });
+        const any = sessions.list().length > 0;
+        sessions.stopAll();
+        return json(res, 200, { stopped: any });
       }
       case "POST /api/session/cursor": {
         // the studio's cursor in the editor, in canvas coordinates (null: it left the canvas)

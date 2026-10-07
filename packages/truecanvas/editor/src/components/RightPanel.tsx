@@ -13,6 +13,7 @@ import { StyleSections } from "./StyleSections";
 import { CommentsTab } from "./Comments";
 import { AgentTab } from "./AgentTab";
 import { openShare } from "./ShareDialog";
+import { SessionButton } from "./LiveSession";
 
 export function RightPanel() {
   const tab = useStore((s) => s.rightTab);
@@ -36,6 +37,7 @@ export function RightPanel() {
             {unseen > 0 && tab !== "agent" && <span className="count">{unseen}</span>}
           </button>
         </div>
+        <SessionButton />
         <button className="btn primary share-btn" onClick={openShare} title="Share a link with clients">
           Share
         </button>

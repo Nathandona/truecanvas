@@ -40,6 +40,8 @@ Usage
                        --invite <emails>: invite people by email (they sign in with a link; new links are invited-only)
                        --access invited|password|public: who can open the link
                        --link-only: with --invite or --access, change the link without a new version
+                       --session: a live session (until Ctrl+C): the link shows the canvas live from your app,
+                         with everyone's cursors and comments in real time
   truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
@@ -66,6 +68,52 @@ const c = {
 };
 
 const accessLabel = (access: Access | null) => (access === "invited" ? "invited people only" : access === "password" ? "password protected" : access === "public" ? "anyone with the link" : "");
+
+/**
+ * `share <canvas> --session`: the running Truecanvas holds the session (it has
+ * the dev server); this keeps it open and reports who's here until Ctrl+C.
+ */
+async function liveSession(base: string, canvas: string) {
+  type State = { canvas: string; status: string; url: string; error: string | null; people: { id: string; name: string; kind: string }[]; you: string | null };
+  const call = async (route: string, body?: unknown) => {
+    const res = await fetch(`${base}${route}`, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify(body) });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
+    return data;
+  };
+  let session: State;
+  try {
+    session = ((await call("/api/session/start", { canvas })) as { session: State }).session;
+  } catch (err) {
+    console.error(`  ${c.red("✗")} ${(err as Error).message}`);
+    process.exit(1);
+  }
+  console.log(`  ${c.green("●")} Live session on ${c.bold(canvas)}: ${c.bold(session.url)}`);
+  console.log(`  ${c.dim("People with access to the link see the canvas live from your app. Ctrl+C ends the session.")}`);
+  let last = "";
+  const tick = async () => {
+    const all = ((await call("/api/session").catch(() => ({ sessions: [] }))) as { sessions: State[] }).sessions;
+    const s = all.find((x) => x.canvas === canvas);
+    if (!s || s.status === "stopped") {
+      console.log(`  ${c.yellow("!")} The session ended${s?.error ? `: ${s.error}` : "."}`);
+      process.exit(s?.error ? 1 : 0);
+    }
+    const here = s.people.filter((p) => p.id !== s.you).map((p) => p.name);
+    const line = `${s.status}${here.length ? ` · here: ${here.join(", ")}` : ""}`;
+    if (line !== last) console.log(`  ${s.status === "live" ? c.green("●") : c.yellow("○")} ${line}`);
+    last = line;
+  };
+  const timer = setInterval(() => void tick(), 2000);
+  const end = async () => {
+    clearInterval(timer);
+    await call("/api/session/stop", { canvas }).catch(() => {});
+    console.log(`  ${c.dim("Session ended: the link shows the latest published version again.")}`);
+    process.exit(0);
+  };
+  process.once("SIGINT", () => void end());
+  process.once("SIGTERM", () => void end());
+  await new Promise(() => {});
+}
 
 function printInvited(invited: Invited[]) {
   for (const i of invited) {
@@ -101,6 +149,7 @@ async function main() {
       invite: { type: "string", multiple: true },
       access: { type: "string" },
       "link-only": { type: "boolean" },
+      session: { type: "boolean" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -294,6 +343,8 @@ async function main() {
       console.error(`Which canvas? ${state.canvases.join(", ") || "(none)"}\n  truecanvas share <canvas>`);
       process.exit(1);
     }
+    // a live session: people with access to the link follow the canvas live, until Ctrl+C
+    if (values.session) return liveSession(base, canvas);
     const publish = !values.local && !!reviewSite();
     console.log(`  ${c.dim(`Rendering ${canvas} through your app${publish ? " and publishing it" : ""}…`)}`);
     const password = values.password;

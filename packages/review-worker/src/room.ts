@@ -50,6 +50,12 @@ export class Room extends DurableObject<ReviewEnv> {
   private lastCursor = new WeakMap<WebSocket, number>();
   private seq = 0;
 
+  constructor(ctx: DurableObjectState, env: ReviewEnv) {
+    super(ctx, env);
+    // keep-alives get their answer without waking the room
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/join" || url.pathname === "/host") return this.join(req, url.pathname === "/host");
@@ -151,8 +157,6 @@ export class Room extends DurableObject<ReviewEnv> {
       this.lastCursor.set(ws, now);
       const on = typeof msg.x === "number" && typeof msg.y === "number" && Number.isFinite(msg.x) && Number.isFinite(msg.y);
       this.broadcast({ t: "cursor", id: a.id, x: on ? Math.round(msg.x as number) : null, y: on ? Math.round(msg.y as number) : null }, ws);
-    } else if (msg.t === "ping") {
-      ws.send(JSON.stringify({ t: "pong" }));
     }
   }
 

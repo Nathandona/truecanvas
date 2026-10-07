@@ -149,9 +149,30 @@ async function openProject(dir: string) {
   await fetch(`${origin}/api/hub/open`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ path: dir, focus: "1" }) }).catch(() => {});
 }
 
+/** The tray's live session entry: Start or Stop, for the active project's open canvas. */
+async function liveSessionItem(): Promise<MenuItemConstructorOptions> {
+  if (!hub) return { label: "Start live session", enabled: false };
+  const state = await hub.state().catch(() => null);
+  const active = state?.active ?? null;
+  const ready = !!active && state?.projects.find((p) => p.path === active)?.running?.status === "ready";
+  const live = active ? (state?.liveSession.sessions[active] ?? []) : [];
+  const toggle = () =>
+    void hub!.liveSession
+      .toggle()
+      .then((sessions) => {
+        const s = sessions[0];
+        if (s && Notification.isSupported()) new Notification({ title: `Live session on ${s.canvas}`, body: `People with access to ${s.url} now follow it live.`, silent: true }).show();
+      })
+      .catch((err: Error) => Notification.isSupported() && new Notification({ title: "Live session", body: err.message }).show())
+      .finally(() => void buildTrayMenu());
+  if (live.length) return { label: `Stop live session (${live.map((s) => s.canvas).join(", ")})`, click: toggle };
+  return { label: "Start live session", enabled: ready, toolTip: ready ? "Clients follow the open canvas live on its share link" : "Open a project first", click: toggle };
+}
+
 async function buildTrayMenu() {
   if (!tray) return;
   const projects = await recentProjects();
+  const session = await liveSessionItem();
   const items: MenuItemConstructorOptions[] = [
     { label: "Open Truecanvas", click: showWindow },
     { type: "separator" },
@@ -159,11 +180,7 @@ async function buildTrayMenu() {
       ? [{ label: "Recent projects", enabled: false } as MenuItemConstructorOptions, ...projects.map((p) => ({ label: `${p.running ? "● " : ""}${p.name}`, click: () => void openProject(p.path) }))]
       : [{ label: "No projects yet", enabled: false } as MenuItemConstructorOptions]),
     { type: "separator" },
-    {
-      label: "Start live session",
-      enabled: !!hub?.liveSession.available,
-      click: () => void hub?.liveSession.toggle().catch(() => {}),
-    },
+    session,
     { type: "separator" },
     { label: "Start at login", type: "checkbox", checked: startsAtLogin(), click: (item) => setStartAtLogin(item.checked) },
     { type: "separator" },
@@ -253,7 +270,9 @@ async function main() {
 
   ipcMain.handle("truecanvas:live-session", async () => {
     if (!hub) throw new Error("This window shows a Truecanvas started from the command line: live sessions start there.");
-    await hub.liveSession.toggle();
+    const sessions = await hub.liveSession.toggle();
+    void buildTrayMenu();
+    return sessions;
   });
 
   createWindow();

@@ -3754,6 +3754,80 @@ details.advanced summary::-webkit-details-marker {
 .share-btn:active {
   transform: scale(0.97);
 }
+
+/* ---------- live session ---------- */
+.session {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+}
+.session-btn {
+  height: 26px;
+  padding: 0 9px;
+  gap: 6px;
+  transition: transform 0.12s cubic-bezier(0.23, 1, 0.32, 1), background-color 0.15s ease, color 0.15s ease;
+}
+.session-btn:active {
+  transform: scale(0.97);
+}
+.session-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3, #999);
+  flex: none;
+}
+.session-btn.on {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.session-btn.on .session-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.session-btn.waiting .session-dot {
+  animation: session-wait 1s ease-in-out infinite alternate;
+}
+@keyframes session-wait {
+  to {
+    opacity: 0.3;
+  }
+}
+.session-faces {
+  display: flex;
+}
+.session-face {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  border: 2px solid var(--panel, #fff);
+  margin-left: -6px;
+}
+.session-face:first-child {
+  margin-left: 0;
+}
+.session-face.more {
+  background: #8b8a85;
+}
+/* people in a live session: their cursor follows them, no easing to wait for */
+.room-cursor {
+  animation: none;
+  transition: transform 0.09s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-btn.waiting .session-dot {
+    animation: none;
+  }
+  .room-cursor {
+    transition: none;
+  }
+}
 .share-busy {
   display: flex;
   align-items: center;

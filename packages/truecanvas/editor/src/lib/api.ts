@@ -54,7 +54,34 @@ export type ServerEvent =
   | { type: "presence"; presence: Presence }
   | { type: "canvas-renamed"; from: string; to: string }
   | { type: "comments"; canvas: string }
-  | { type: "git" };
+  | { type: "git" }
+  | { type: "session"; session: SessionState }
+  | { type: "room"; canvas: string; event: RoomEvent };
+
+/** Someone in a share link's room, during a live session. */
+export interface RoomPerson {
+  id: string;
+  name: string;
+  kind: "client" | "studio";
+  color: string;
+}
+
+export type RoomEvent =
+  | { t: "hello"; you: RoomPerson; live: boolean; route: string | null; people: RoomPerson[] }
+  | { t: "join"; person: RoomPerson }
+  | { t: "leave"; id: string }
+  | { t: "cursor"; id: string; x: number | null; y: number | null }
+  | { t: "state"; live: boolean; route: string | null };
+
+/** A canvas's live session: clients follow it on its share link. */
+export interface SessionState {
+  canvas: string;
+  status: "connecting" | "live" | "reconnecting" | "stopped";
+  url: string;
+  error: string | null;
+  people: RoomPerson[];
+  you: string | null;
+}
 
 export interface Presence {
   session: string;
@@ -134,6 +161,10 @@ export const api = {
   components: () => call<{ components: ComponentSpec[] }>("/api/components"),
   libraries: () => call<LibraryState>("/api/libraries"),
   shareStatus: () => call<{ site: string | null; features: string[] }>("/api/share/status"),
+  sessions: () => call<{ sessions: SessionState[] }>("/api/session"),
+  startSession: (canvas: string) => call<{ session: SessionState }>("/api/session/start", { canvas }),
+  stopSession: (canvas: string) => call<{ stopped: boolean }>("/api/session/stop", { canvas }),
+  sessionCursor: (canvas: string, x: number | null, y: number | null) => call<{ ok: true }>("/api/session/cursor", { canvas, x, y }),
   share: (body: { canvas: string; title?: string; password?: string; local?: boolean; access?: ShareAccess; invite?: string[] }) => call<ShareResult>("/api/share/snapshot", body),
   shadcnRegistry: () => call<{ names: string[]; offline: boolean; status: ShadcnStatus }>("/api/libraries/shadcn"),
   icons: (library: string, q: string, limit = 240) => call<{ total: number; icons: { name: string; svg: string }[] }>(`/api/icons?library=${encodeURIComponent(library)}&q=${encodeURIComponent(q)}&limit=${limit}`),

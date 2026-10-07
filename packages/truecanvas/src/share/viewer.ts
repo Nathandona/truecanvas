@@ -156,13 +156,26 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 .live-device { position: relative; overflow: hidden; border-radius: 10px; background: #fff; box-shadow: 0 30px 80px -20px rgba(0,0,0,.6); animation: pop-in .2s var(--ease-out); }
 .live-device iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: #fff; }
 @media (max-width: 640px) { .live-bar .meta { display: none; } }
-@media (prefers-reduced-motion: reduce) { .frame-box iframe { transition: none; } #live, .live-device { animation: none; } }
+/* the room: who's here, their cursors, a live session */
+#room { gap: 8px; padding: 0 10px 0 12px; }
+.live-badge { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; font-size: 12px; color: #dc2626; letter-spacing: .01em; }
+.live-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.18); }
+.faces { display: flex; }
+.face { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 10.5px; font-weight: 650;
+  border: 2px solid var(--panel-solid); margin-left: -6px; }
+.face:first-child { margin-left: 0; }
+.rcursor { position: absolute; width: 0; height: 0; transform-origin: 0 0; z-index: 3; pointer-events: none; transition: left .09s linear, top .09s linear; }
+.rcursor svg { position: absolute; left: -2px; top: -2px; display: block; }
+.rcursor span { position: absolute; left: 13px; top: 15px; white-space: nowrap; padding: 2px 7px; border-radius: 7px; color: #fff; font-size: 11.5px; font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+@media (prefers-reduced-motion: reduce) { .frame-box iframe { transition: none; } #live, .live-device { animation: none; } .rcursor { transition: none; } }
 </style>
 </head>
 <body>
 <div id="stage" aria-label="Design canvas"><div id="world"></div></div>
 <header>
   <div class="pill brand" id="brand"><span>Design review</span></div>
+  <div class="pill" id="room" hidden aria-live="polite"></div>
   <div class="pill"><span class="title" id="title"></span><span class="sep"></span><span class="meta" id="meta"></span><button id="list" hidden aria-label="Comments" title="Comments"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg><span class="count" id="count">0</span></button></div>
 </header>
 <aside id="panel" hidden aria-label="Comments"><div class="panel-head"><span>Comments</span><button id="panel-close" aria-label="Close">✕</button></div><div class="panel-list" id="panel-list"></div></aside>
@@ -320,7 +333,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     zoomLabel.textContent = Math.round(z * 100) + "%";
     // labels keep a readable size at any zoom
     for (const l of labels) l.style.transform = "scale(" + 1 / z + ")";
-    for (const p of world.querySelectorAll(".pin")) p.style.transform = "scale(" + 1 / z + ")";
+    for (const p of world.querySelectorAll(".pin, .rcursor")) p.style.transform = "scale(" + 1 / z + ")";
     if (typeof placePop === "function") placePop();
   };
   const zoomAt = (nz, cx, cy) => {
@@ -739,6 +752,156 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     await refresh();
     setInterval(() => document.visibilityState === "visible" && refresh(), 15000);
     addEventListener("visibilitychange", () => document.visibilityState === "visible" && refresh());
+  }
+
+  // ---------- the link's room: who's here, their cursors, comments as they come, live sessions ----------
+  if (manifest.room && "WebSocket" in window) {
+    const people = new Map();
+    const roomPill = document.getElementById("room");
+    let me = null, live = false, route = null, sock = null, retry = 1000, ping = 0;
+    // a session shows the app as it is now: only on the latest version
+    const canLive = !!manifest.session && (!manifest.versions || !manifest.versions.length || manifest.versions[0].id === manifest.id);
+    const initials = (n) => n.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+
+    function renderRoom() {
+      const others = [...people.values()];
+      roomPill.hidden = !live && !others.length;
+      roomPill.textContent = "";
+      if (live) roomPill.appendChild(el("span", "live-badge", "Live"));
+      const faces = el("span", "faces");
+      for (const p of others.slice(0, 5)) {
+        const f = el("span", "face", initials(p.name));
+        f.style.background = p.color;
+        f.title = p.name + (p.kind === "studio" ? " (" + studioName + ")" : "");
+        faces.appendChild(f);
+      }
+      if (others.length > 5) faces.appendChild(el("span", "face", "+" + (others.length - 5))).style.background = "#8b8a85";
+      if (others.length) roomPill.appendChild(faces);
+      roomPill.setAttribute("aria-label", (live ? "Live session. " : "") + (others.length ? others.map((p) => p.name).join(", ") + " here" : ""));
+    }
+
+    function cursorOf(p) {
+      if (p.el) return p.el;
+      p.el = el("div", "rcursor");
+      p.el.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2.2 1.6 15.1 8.3c.7.4.6 1.4-.2 1.6l-5.3 1.3-2.6 4.8c-.4.7-1.4.6-1.6-.2L1.1 2.7c-.2-.8.5-1.4 1.1-1.1Z" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+      p.el.querySelector("path").setAttribute("fill", p.color);
+      const name = el("span", null, p.name);
+      name.style.background = p.color;
+      p.el.appendChild(name);
+      p.el.style.transform = "scale(" + 1 / z + ")";
+      world.appendChild(p.el);
+      return p.el;
+    }
+    function moveCursor(p, cx, cy) {
+      if (cx == null || cy == null) { if (p.el) p.el.hidden = true; return; }
+      const c = cursorOf(p);
+      c.hidden = false;
+      c.style.left = cx - minX + "px";
+      c.style.top = cy - minY + "px";
+    }
+    const add = (person) => { if (person.id !== me) people.set(person.id, Object.assign(people.get(person.id) || {}, person)); };
+    const remove = (id) => { const p = people.get(id); if (p && p.el) p.el.remove(); people.delete(id); };
+
+    // live frames: the studio's app, served from the link's session host, at each frame's size
+    function sessionFrame(f) {
+      const home = new URL(manifest.session.url);
+      const url = new URL((route || "/truecanvas/") + encodeURIComponent(manifest.canvas), home);
+      url.searchParams.set("frame", f.name);
+      if (f.theme) url.searchParams.set("theme", f.theme);
+      const token = home.searchParams.get("tc_access");
+      if (token) url.searchParams.set("tc_access", token);
+      return url.href;
+    }
+    function setLive(on) {
+      on = !!on && canLive;
+      if (on === live) return renderRoom();
+      live = on;
+      for (const frameEl of world.querySelectorAll(".frame")) {
+        const f = frameOf(frameEl.dataset.name);
+        const box = frameEl.querySelector(".frame-box");
+        const old = box.querySelector("iframe");
+        const img = box.querySelector("img");
+        const next = document.createElement("iframe");
+        next.title = f.name;
+        next.setAttribute("scrolling", "no");
+        if (on) {
+          // its own origin: the app's scripts run there, never on the review site
+          next.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+          next.setAttribute("referrerpolicy", "no-referrer");
+          next.src = sessionFrame(f);
+        } else {
+          next.setAttribute("sandbox", "");
+          next.loading = "lazy";
+          next.src = f.html;
+          if (img) img.style.visibility = "";
+        }
+        next.addEventListener("load", () => { next.classList.add("ready"); if (on && img) img.style.visibility = "hidden"; });
+        old.replaceWith(next);
+      }
+      renderRoom();
+      toast(on ? "Live: you're seeing the design as the studio works on it" : "The live session ended: back to the published version");
+    }
+
+    function onEvent(e) {
+      if (e.t === "hello") {
+        me = e.you.id;
+        for (const id of [...people.keys()]) remove(id);
+        for (const p of e.people) add(p);
+        route = e.route;
+        setLive(e.live);
+      } else if (e.t === "join") { add(e.person); renderRoom(); }
+      else if (e.t === "leave") { remove(e.id); renderRoom(); }
+      else if (e.t === "cursor") { const p = people.get(e.id); if (p) moveCursor(p, e.x, e.y); }
+      else if (e.t === "state") { route = e.route || route; setLive(e.live); }
+      else if (e.t === "comments" && canComment) refresh();
+    }
+
+    function connect() {
+      const url = new URL("room", document.baseURI);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      const typed = storedName();
+      if (!manifest.viewer && typed) url.searchParams.set("name", typed);
+      const s = new WebSocket(url.href);
+      sock = s;
+      s.onopen = () => {
+        retry = 1000;
+        clearInterval(ping);
+        // idle sockets are dropped after about 100 s: the room answers "ping" without waking up
+        ping = setInterval(() => s.readyState === 1 && s.send("ping"), 30000);
+      };
+      s.onmessage = (m) => {
+        if (m.data === "pong") return;
+        let e;
+        try { e = JSON.parse(m.data); } catch { return; }
+        onEvent(e);
+      };
+      s.onclose = () => {
+        clearInterval(ping);
+        if (sock !== s) return;
+        sock = null;
+        for (const id of [...people.keys()]) remove(id);
+        renderRoom();
+        setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 15000);
+      };
+    }
+
+    // my cursor, in canvas coordinates, at most 20 times a second
+    let next = null, timer = 0, last = 0;
+    const flush = () => {
+      timer = 0;
+      if (!next || !sock || sock.readyState !== 1) return;
+      last = Date.now();
+      sock.send(JSON.stringify({ t: "cursor", x: next.x, y: next.y }));
+      next = null;
+    };
+    const sendCursor = (cx, cy) => {
+      next = { x: cx, y: cy };
+      if (!timer) timer = setTimeout(flush, Math.max(0, 50 - (Date.now() - last)));
+    };
+    stage.addEventListener("pointermove", (e) => sendCursor((e.clientX - x) / z + minX, (e.clientY - y) / z + minY));
+    stage.addEventListener("pointerleave", () => sendCursor(null, null));
+    connect();
   }
 })();
 </script>

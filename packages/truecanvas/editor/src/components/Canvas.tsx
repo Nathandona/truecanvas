@@ -11,6 +11,7 @@ import { useCanvasKeyboard } from "./useCanvasKeyboard";
 import type { Drag, Override, Reorder } from "./canvasShared";
 import { Overlay, textTarget } from "./CanvasOverlay";
 import { CanvasMenu } from "./CanvasMenu";
+import { sendSessionCursor } from "./LiveSession";
 
 export function CanvasView() {
   const doc = useStore((s) => s.doc);
@@ -203,6 +204,9 @@ export function CanvasView() {
 
   const onPointerMove = (e: React.PointerEvent) => {
     lastPointer.current = { x: e.clientX, y: e.clientY };
+    // a live session on this canvas: clients see where the studio points
+    const at = toWorld(e.clientX, e.clientY);
+    sendSessionCursor(at.x, at.y);
     const d = dragRef.current;
     const cam = useStore.getState().camera;
     if (!d) {
@@ -469,7 +473,10 @@ export function CanvasView() {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => !dragRef.current && useStore.getState().hover && useStore.setState({ hover: null })}
+      onPointerLeave={() => {
+        sendSessionCursor(null, null);
+        if (!dragRef.current && useStore.getState().hover) useStore.setState({ hover: null });
+      }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       onDragOver={onDragOver}

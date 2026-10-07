@@ -6,6 +6,6 @@ import { contextBridge, ipcRenderer } from "electron";
  */
 contextBridge.exposeInMainWorld("truecanvasDesktop", {
   version: process.argv.find((a) => a.startsWith("--truecanvas-version="))?.split("=")[1] ?? "",
-  /** start or stop a live session for the active project (milestone 3; rejects until then) */
-  liveSession: (): Promise<void> => ipcRenderer.invoke("truecanvas:live-session"),
+  /** start or stop a live session for the active project's open canvas: its running sessions after */
+  liveSession: (): Promise<{ canvas: string; status: string; url: string }[]> => ipcRenderer.invoke("truecanvas:live-session"),
 });
