@@ -1,6 +1,6 @@
 {
   "name": "truecanvas",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Design with your real React components: a Figma-like canvas for Next.js and Vite where layers are your .tsx and agents edit through MCP.",
   "license": "MIT",
   "type": "module",
