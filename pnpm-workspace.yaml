@@ -8,5 +8,8 @@ allowBuilds:
   "@tailwindcss/oxide": true
   unrs-resolver: true
   workerd: true
+  electron: true
+  # only used to build Windows installers, on Windows
+  electron-winstaller: false
 minimumReleaseAgeExclude:
   - lucide-react@1.52.0

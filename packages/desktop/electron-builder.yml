@@ -1,0 +1,48 @@
+# Packaging: pnpm dist (Linux AppImage and deb). macOS and Windows build the
+# same way (electron-builder --mac / --win) but aren't signed yet.
+appId: dev.truecanvas.app
+productName: Truecanvas
+electronVersion: 44.5.1
+directories:
+  output: release
+  buildResources: build
+# main and preload are bundled by esbuild: no node_modules in the app
+files:
+  - dist/**
+  - package.json
+extraResources:
+  - from: build/icons
+    to: icons
+# the truecanvas runtime (with its node_modules) is copied in by this hook
+afterPack: scripts/after-pack.cjs
+npmRebuild: false
+nodeGypRebuild: false
+publish:
+  - provider: github
+    owner: Nathandona
+    repo: truecanvas
+    releaseType: release
+linux:
+  target: [AppImage, deb]
+  category: Development
+  icon: build/icons
+  executableName: truecanvas-desktop
+  artifactName: Truecanvas-${version}-${arch}.${ext}
+  synopsis: Design with your real React components
+  description: A canvas for Next.js and Vite where layers are your .tsx and agents edit through MCP.
+  # the window belongs to the launcher entry (desktopName in package.json)
+  syncDesktopName: true
+deb:
+  artifactName: truecanvas_${version}_${arch}.${ext}
+mac:
+  target: dmg
+  category: public.app-category.developer-tools
+  icon: build/icons/1024x1024.png
+  # unsigned until an Apple developer account is set up
+  identity: null
+win:
+  target: nsis
+  icon: build/icons/256x256.png
+nsis:
+  oneClick: true
+  perMachine: false

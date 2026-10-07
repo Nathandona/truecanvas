@@ -1,4 +1,4 @@
-// pnpm release <version>: bumps both packages, commits and tags. Pushing the
+// pnpm release <version>: bumps the packages and the desktop app, commits and tags. Pushing the
 // tag (git push --follow-tags) runs .github/workflows/release.yml.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -15,7 +15,7 @@ if (execFileSync("git", ["status", "--porcelain"], { cwd: root }).toString().tri
   console.error("Commit or stash your changes first.");
   process.exit(1);
 }
-const files = ["packages/truecanvas/package.json", "packages/create-truecanvas/package.json"];
+const files = ["packages/truecanvas/package.json", "packages/create-truecanvas/package.json", "packages/desktop/package.json"];
 for (const f of files) {
   const file = path.join(root, f);
   const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
