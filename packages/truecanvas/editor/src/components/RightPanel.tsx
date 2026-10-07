@@ -12,6 +12,7 @@ import { rawId } from "../lib/scope";
 import { StyleSections } from "./StyleSections";
 import { CommentsTab } from "./Comments";
 import { AgentTab } from "./AgentTab";
+import { openShare } from "./ShareDialog";
 
 export function RightPanel() {
   const tab = useStore((s) => s.rightTab);
@@ -35,6 +36,9 @@ export function RightPanel() {
             {unseen > 0 && tab !== "agent" && <span className="count">{unseen}</span>}
           </button>
         </div>
+        <button className="btn primary share-btn" onClick={openShare} title="Share a link with clients">
+          Share
+        </button>
       </div>
       <div className="scroll">{tab === "design" ? <Design /> : tab === "comments" ? <CommentsTab /> : <AgentTab />}</div>
     </aside>

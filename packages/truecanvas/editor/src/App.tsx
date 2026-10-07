@@ -14,6 +14,7 @@ import { CompareBar } from "./components/Compare";
 import { ReviewSheet } from "./components/GitPanel";
 import { ComponentDialog } from "./components/ComponentDialog";
 import { LibrariesDialog } from "./components/LibrariesDialog";
+import { ShareDialog } from "./components/ShareDialog";
 import { fromServer } from "./lib/scope";
 
 let flashSeq = 0;
@@ -161,6 +162,7 @@ export function App() {
         <ReviewSheet />
         <ComponentDialog />
         <LibrariesDialog />
+        <ShareDialog />
         <Toolbar />
         {appStatus === "down" && (
           <div className="banner" role="status">

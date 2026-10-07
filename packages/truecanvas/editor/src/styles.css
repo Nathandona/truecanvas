@@ -3744,3 +3744,60 @@ details.advanced summary::-webkit-details-marker {
   pointer-events: none;
   animation: none;
 }
+
+/* ---------- share ---------- */
+.share-btn {
+  height: 26px;
+  padding: 0 11px;
+  transition: transform 0.12s cubic-bezier(0.23, 1, 0.32, 1), filter 0.15s ease;
+}
+.share-btn:active {
+  transform: scale(0.97);
+}
+.share-busy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0 10px;
+}
+.share-label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-bottom: 5px;
+}
+.share-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 0 8px;
+  cursor: pointer;
+}
+.share-actions {
+  margin-top: 16px;
+}
+.share-link {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.share-link .field {
+  flex: 1;
+}
+.share-cmd {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--field);
+  margin-bottom: 16px;
+  user-select: all;
+}
+.modal p.share-warn {
+  color: var(--warning, #b45309);
+  margin: 0 0 10px;
+}
+.modal p.share-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 10px;
+}

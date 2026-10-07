@@ -18,9 +18,10 @@ Truecanvas renders your actual `.tsx` components on an infinite canvas and write
 
 - **Real components.** Layers are instances of your components, with a props panel generated from their TypeScript types.
 - **Code is the document.** A canvas is a `.canvas.tsx` file. Edits are minimal patches that keep your formatting, so diffs stay reviewable.
-- **Agent-first.** 44 MCP tools to read the tree, insert JSX, set props and classes, create frames and variants, and take screenshots.
+- **Agent-first.** 45 MCP tools to read the tree, insert JSX, set props and classes, create frames and variants, and take screenshots.
 - **Design on real pages.** Link any Next.js page as a frame: editing its layers edits `page.tsx` and its layouts.
 - **Components and libraries.** Turn a selection into a component, edit main components, install icon sets (Lucide, Tabler, Phosphor, Heroicons, Radix) and add shadcn/ui components.
+- **Share with clients.** One click freezes a page into a private link on your own domain: clients look and comment in their browser, nothing to install.
 - **Git built in.** Per-frame change summaries, branches, commits, pull requests with before/after images, visual compare and comments that travel with branches.
 - **Motion, devices, themes.** Scroll reveals and text animations, iPhone/Pixel/iPad presets with device chrome, and per-frame light and dark themes.
 - **Lightweight.** Frames render through your existing dev server. Headless Chromium only starts when an agent asks for a screenshot.
@@ -99,7 +100,7 @@ export default function ChatCanvas() {
 | Edit | `insert_jsx` `replace_node` `set_props` `set_text` `set_class_name` `move_node` `duplicate_nodes` `delete_nodes` `wrap_nodes` `undo` `redo` |
 | Frames and pages | `create_frame` `update_frame` `create_variants_frame` `create_canvas` `rename_canvas` `delete_canvas` `import_page` `explore_copy` `apply_to_page` |
 | Components and libraries | `create_component` `open_component` `list_libraries` `install_library` `search_icons` `insert_icon` `add_shadcn_components` |
-| Look and show | `screenshot_frame` `focus` `play_frame` `add_animation` `remove_animation` `add_background` `apply_preset` `reply_comment` `resolve_comment` |
+| Look and show | `share_canvas` `screenshot_frame` `focus` `play_frame` `add_animation` `remove_animation` `add_background` `apply_preset` `reply_comment` `resolve_comment` |
 
 Node ids are the JSX tag's `line:col` and change after edits; every write returns the fresh ids. Catalog components are imported automatically.
 
@@ -108,6 +109,18 @@ Node ids are the JSX tag's `line:col` and change after edits; every write return
 Canvases, comments and linked pages are files in your repo, so design changes are branched, reviewed and merged like code. From the Git panel you can branch, commit with a per-frame summary, open a pull request with before/after images, and compare against any branch or commit. Comments are saved with the canvas and agents can read and resolve them.
 
 The **Truecanvas window** (`npx truecanvas open`) manages several projects in tabs, clones from GitHub and reviews pull requests on the canvas.
+
+## Share with clients
+
+**Share** (top right in the editor), `npx truecanvas share <canvas>`, or your agent's `share_canvas` renders every frame through your app and freezes it into static HTML and CSS: no scripts, so a link can never call your API or leak a session. It's published to your own review site as a new version of that page's link. Clients open it in any browser, with an optional password; `--revoke` takes a link down.
+
+The review site is `packages/review`, a small Next.js app you deploy once to your Vercel account:
+
+1. Create a Vercel project from this repo with **Root Directory** `packages/review`, and add a private **Blob** store and **Upstash for Redis** (both have free tiers).
+2. Set `REVIEW_TOKEN` (a long random string), and optionally `BRAND_NAME` and `BRAND_LOGO` (a logo URL) for your studio's branding.
+3. Add your domain (for example `review.your-studio.com`), then connect Truecanvas: `npx truecanvas share setup https://review.your-studio.com`.
+
+Without a review site, Share still makes a local preview of what clients would see.
 
 ## Configuration
 

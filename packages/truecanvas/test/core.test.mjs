@@ -979,6 +979,16 @@ test("server: serves the editor and its assets, refuses paths outside, binds to 
     assert.doesNotMatch(escape, /"name"/, "no file outside the editor bundle");
     const foreign = await fetch(`${base}/api/state`, { headers: { origin: "https://evil.example" } });
     assert.equal(foreign.status, 403, "other origins are refused");
+    // share previews: static files that sandboxed frames (origin "null") load, fonts included
+    const shareDir = path.join(proj, "node_modules/.cache/truecanvas/shares/demo/1");
+    fs.mkdirSync(path.join(shareDir, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(shareDir, "assets/f.woff2"), "font");
+    fs.writeFileSync(path.join(shareDir, "index.html"), "<p>viewer</p>");
+    const font = await fetch(`${base}/share/demo/1/assets/f.woff2`, { headers: { origin: "null" } });
+    assert.equal(font.status, 200);
+    assert.equal(font.headers.get("access-control-allow-origin"), "*");
+    assert.equal(await fetch(`${base}/share/demo/1/`).then((r) => r.text()), "<p>viewer</p>");
+    assert.equal((await fetch(`${base}/share/..%2f..%2f..%2f..%2fpackage.json`)).status, 404, "nothing outside the shares folder");
   } finally {
     child.kill();
   }

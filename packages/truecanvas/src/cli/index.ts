@@ -15,6 +15,7 @@ import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.j
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
+import { connectReviewSite, reviewSite, updateShare } from "../share/publish.js";
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 
@@ -32,6 +33,9 @@ Usage
   truecanvas open      Open the Truecanvas window (projects dashboard + tabs)
   truecanvas quit      Quit the window and every app it started
   truecanvas desktop   Add Truecanvas to your app launcher (Linux); "desktop remove" undoes it
+  truecanvas share [canvas]  Share a canvas as a link for clients (needs truecanvas running).
+                       --password <p>, --no-password, --revoke, --restore, --title <t>, --local (preview only)
+  truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
 Options
@@ -71,6 +75,13 @@ async function main() {
       cursor: { type: "boolean" },
       vscode: { type: "boolean" },
       version: { type: "boolean", short: "v" },
+      local: { type: "boolean" },
+      title: { type: "string" },
+      password: { type: "string" },
+      "no-password": { type: "boolean" },
+      revoke: { type: "boolean" },
+      restore: { type: "boolean" },
+      token: { type: "string" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -185,6 +196,69 @@ async function main() {
     console.log(`  ${c.green("✓")} Canvas folder ${c.bold(config.canvasDir)} and dev route ${c.bold(config.routeDir)}`);
     for (const line of report.todo) console.log(`  ${c.dim("!")} ${line}`);
     console.log(`\n  Next: ${c.accent("npm run canvas")} ${c.dim("(starts your app and the editor)")}\n`);
+    return;
+  }
+  if (command === "share") {
+    // setup: connect the studio's review site (URL + token from its environment variables)
+    if (positionals[1] === "setup") {
+      const url = positionals[2] ?? (await prompt("Review site URL (e.g. https://review.your-studio.com):"));
+      const token = values.token ?? process.env.TRUECANVAS_REVIEW_TOKEN ?? (await prompt("Its REVIEW_TOKEN:"));
+      try {
+        const { brand } = await connectReviewSite(url, token);
+        console.log(`  ${c.green("✓")} Connected to ${c.bold(brand.name)} (${url}). Share with ${c.accent("npx truecanvas share <canvas>")}.`);
+      } catch (err) {
+        console.error(`  ${c.red("✗")} ${(err as Error).message}`);
+        process.exit(1);
+      }
+      return;
+    }
+    const base = `http://localhost:${config.port}`;
+    const state = await fetch(`${base}/api/state`).then((r) => (r.ok ? (r.json() as Promise<{ canvases: string[] }>) : null)).catch(() => null);
+    const canvas = positionals[1] ?? (state?.canvases.length === 1 ? state.canvases[0] : null);
+    // revoke / restore / password: only the review site is involved
+    // link changes only: never a new version
+    if (values.revoke || values.restore || values["no-password"]) {
+      const site = reviewSite();
+      if (!site || !canvas) {
+        console.error(site ? "Name the canvas: truecanvas share <canvas> --revoke" : `No review site yet: ${c.accent("npx truecanvas share setup")}`);
+        process.exit(1);
+      }
+      const change = { ...(values.revoke ? { revoked: true } : values.restore ? { revoked: false } : {}), ...(values["no-password"] ? { password: null } : {}) };
+      const url = await updateShare(site, path.basename(root), canvas, change);
+      console.log(`  ${c.green("✓")} ${values.revoke ? "Link revoked" : values.restore ? "Link restored" : "Password removed"}: ${url}`);
+      return;
+    }
+    if (!state) {
+      console.error(`Truecanvas isn't running for this project. Start it first: ${c.accent("npx truecanvas")}`);
+      process.exit(1);
+    }
+    if (!canvas || !state.canvases.includes(canvas)) {
+      console.error(`Which canvas? ${state.canvases.join(", ") || "(none)"}\n  truecanvas share <canvas>`);
+      process.exit(1);
+    }
+    const publish = !values.local && !!reviewSite();
+    console.log(`  ${c.dim(`Rendering ${canvas} through your app${publish ? " and publishing it" : ""}…`)}`);
+    const password = values.password;
+    const res = await fetch(`${base}/api/share/snapshot`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ canvas, local: !publish, title: values.title, password }) });
+    const body = (await res.json()) as { error?: string; preview: string; manifest: { frames: unknown[]; missing: string[]; external: string[] }; published: { url: string; versions: number; skipped: string[]; password: boolean } | null };
+    if (!res.ok) {
+      console.error(`  ${c.red("✗")} ${body.error}`);
+      process.exit(1);
+    }
+    const { manifest, published } = body;
+    console.log(`  ${c.green("✓")} ${manifest.frames.length} frame${manifest.frames.length === 1 ? "" : "s"} frozen: no scripts, no API calls.`);
+    if (manifest.external.length) console.log(`  ${c.yellow("!")} While rendering, the app called ${manifest.external.join(", ")}. Whatever it showed is in the snapshot: use sample data for client links.`);
+    if (manifest.missing.length) console.log(`  ${c.yellow("!")} ${manifest.missing.length} asset${manifest.missing.length === 1 ? "" : "s"} couldn't be fetched.`);
+    if (published?.skipped.length) console.log(`  ${c.yellow("!")} Left out (over 4.4 MB): ${published.skipped.join(", ")}`);
+    if (published) {
+      console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${published.password ? ", password protected" : ""})`)}\n`);
+      if (values.open && !values["no-open"]) openBrowser(published.url);
+    } else {
+      console.log(`  ${c.dim("Preview")} ${c.bold(body.preview)}`);
+      if (!values.local) console.log(`  ${c.dim("To send links to clients, connect your review site:")} ${c.accent("npx truecanvas share setup")}`);
+      console.log("");
+      if (values.open && !values["no-open"]) openBrowser(body.preview);
+    }
     return;
   }
   if (command === "mcp") {
@@ -304,6 +378,15 @@ async function openInWindow(root: string, port: number): Promise<boolean> {
   await post("/api/hub/open", { path: root, focus: "1" });
   console.log(`${c.accent("◆")} Opened ${c.bold(path.basename(root))} in the Truecanvas window ${c.dim(`(${hub})`)}.`);
   return true;
+}
+
+async function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(`  ${question} `)).trim();
+  } finally {
+    rl.close();
+  }
 }
 
 async function ask(question: string): Promise<boolean> {

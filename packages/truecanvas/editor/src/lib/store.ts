@@ -72,6 +72,7 @@ interface State {
   componentDialog: { from: string | null } | null;
   /** the Libraries dialog (icon sets, shadcn/ui) and its tab */
   libraryDialog: { tab: "icons" | "shadcn" } | null;
+  shareDialog: boolean;
   /** where a layer dragged in the layers tree would land */
   layerDrop: { id: string; where: "before" | "after" | "inside" } | null;
   mcpUrl: string;
@@ -184,6 +185,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   componentsDir: "components",
   componentDialog: null,
   libraryDialog: null,
+  shareDialog: false,
   layerDrop: null,
   mcpUrl: "",
   darkMode: { strategy: "class", value: "dark" },

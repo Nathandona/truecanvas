@@ -119,20 +119,19 @@ export class Screenshotter {
     });
   }
 
-  async frame(opts: {
-    canvas: string;
-    frame: string;
-    width: number;
-    height: number | null;
-    theme: "light" | "dark" | "system";
-    scale?: number;
-    mobile?: boolean;
+  async frame(opts: FrameShotOptions & {
     /** compact JPEG (review thumbnails, PR images) */
     jpeg?: boolean;
-    /** crop hug-height frames to this many px */
-    maxHeight?: number;
   }): Promise<Buffer> {
-    const options = {
+    return this.withContext(this.frameOptions(opts), async (ctx) => {
+      const page = await this.openFrame(ctx, opts);
+      const format = opts.jpeg ? ({ type: "jpeg", quality: 78 } as const) : ({ type: "png" } as const);
+      return await page.screenshot(format);
+    });
+  }
+
+  private frameOptions(opts: FrameShotOptions) {
+    return {
       viewport: { width: opts.width, height: opts.height ?? 800 },
       deviceScaleFactor: opts.scale ?? 1,
       colorScheme: (opts.theme === "dark" ? "dark" : "light") as "dark" | "light",
@@ -140,23 +139,169 @@ export class Screenshotter {
       isMobile: !!opts.mobile,
       hasTouch: !!opts.mobile,
     };
-    return this.withContext(options, async (ctx) => {
-      const page = await ctx.newPage();
-      const url = `${this.appUrl}/truecanvas/${encodeURIComponent(opts.canvas)}?frame=${encodeURIComponent(opts.frame)}&theme=${opts.theme}&still=1`;
-      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
-      await page.waitForSelector("[data-tc-frame]", { timeout: 20_000 });
-      // hug frames: the viewport becomes the page's height, so everything counts as in view (scroll reveals included)
-      if (!opts.height) {
-        const h = await page.evaluate(() => Math.ceil(document.querySelector("[data-tc-frame]")!.getBoundingClientRect().height));
-        await page.setViewportSize({ width: opts.width, height: Math.min(Math.max(h, 100), opts.maxHeight ?? 16_000) });
+  }
+
+  /** Loads a frame, sizes hug frames to their content and waits until it has settled on its final state. */
+  private async openFrame(ctx: Awaited<ReturnType<Browser["newContext"]>>, opts: FrameShotOptions) {
+    const page = await ctx.newPage();
+    const url = `${this.appUrl}/truecanvas/${encodeURIComponent(opts.canvas)}?frame=${encodeURIComponent(opts.frame)}&theme=${opts.theme}&still=1`;
+    await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForSelector("[data-tc-frame]", { timeout: 20_000 });
+    // hug frames: the viewport becomes the page's height, so everything counts as in view (scroll reveals included)
+    if (!opts.height) {
+      const h = await page.evaluate(() => Math.ceil(document.querySelector("[data-tc-frame]")!.getBoundingClientRect().height));
+      await page.setViewportSize({ width: opts.width, height: Math.min(Math.max(h, 100), opts.maxHeight ?? 16_000) });
+    }
+    // entrance animations settle on their final state (see the host's `still` mode)
+    await page.waitForFunction(() => (window as unknown as { __tcStill?: boolean }).__tcStill === true, undefined, { timeout: 6_000 }).catch(() => {});
+    // not requestAnimationFrame: a frozen frame holds its callbacks
+    await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => setTimeout(r, 50))));
+    await page.waitForTimeout(150);
+    return page;
+  }
+
+  /**
+   * A frame frozen into static HTML (share links): the rendered DOM without
+   * scripts, every stylesheet's text, and pixels of the <canvas> elements
+   * (shaders, charts), which only exist at runtime. Assets are left as URLs
+   * for the caller to fetch.
+   */
+  async snapshot(opts: FrameShotOptions): Promise<RawSnapshot> {
+    return this.withContext(this.frameOptions(opts), async (ctx) => {
+      const requests = new Set<string>();
+      ctx.on("request", (r) => {
+        if (/^https?:/.test(r.url())) requests.add(r.url());
+      });
+      const page = await this.openFrame(ctx, opts);
+      // lazy images below the fold have loaded now that the viewport covers the frame
+      await page.evaluate(() => Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((r) => ((img.onload = r), (img.onerror = r), setTimeout(r, 4000)))))));
+      const raw = await page.evaluate(serializePage);
+      const canvases: { index: number; png: Buffer }[] = [];
+      for (const c of raw.canvases) {
+        if (c.w < 1 || c.h < 1) continue;
+        const png = await page.screenshot({ type: "png", clip: { x: c.x, y: c.y, width: c.w, height: c.h }, omitBackground: true }).catch(() => null);
+        if (png) canvases.push({ index: c.index, png });
       }
-      // entrance animations settle on their final state (see the host's `still` mode)
-      await page.waitForFunction(() => (window as unknown as { __tcStill?: boolean }).__tcStill === true, undefined, { timeout: 6_000 }).catch(() => {});
-      // not requestAnimationFrame: a frozen frame holds its callbacks
-      await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => setTimeout(r, 50))));
-      await page.waitForTimeout(150);
-      const format = opts.jpeg ? ({ type: "jpeg", quality: 78 } as const) : ({ type: "png" } as const);
-      return await page.screenshot(format);
+      const png = await page.screenshot({ type: "png", fullPage: true });
+      const viewport = page.viewportSize()!;
+      return { url: raw.url, html: raw.html, css: raw.css, canvases, png, width: viewport.width, height: raw.height, requests: [...requests] };
     });
   }
+}
+
+export interface FrameShotOptions {
+  canvas: string;
+  frame: string;
+  width: number;
+  height: number | null;
+  theme: "light" | "dark" | "system";
+  scale?: number;
+  mobile?: boolean;
+  /** crop hug-height frames to this many px */
+  maxHeight?: number;
+}
+
+export interface RawSnapshot {
+  /** the frame's page URL, to resolve relative asset URLs */
+  url: string;
+  html: string;
+  css: { base: string; text: string; media: string; href?: string }[];
+  canvases: { index: number; png: Buffer }[];
+  /** full-frame screenshot: thumbnail and fallback */
+  png: Buffer;
+  width: number;
+  height: number;
+  /** every URL the page requested while rendering (to flag calls to real APIs) */
+  requests: string[];
+}
+
+/**
+ * Runs in the frame's page: freezes what the browser computed into markup
+ * (chosen image sources, form values), collects the text of every stylesheet,
+ * and clones the document without scripts, event handlers or source ids.
+ * <canvas> elements become <img src="tc-canvas:N"> for the caller to fill.
+ */
+function serializePage() {
+  const abs = (u: string) => {
+    try {
+      return new URL(u, location.href).href;
+    } catch {
+      return u;
+    }
+  };
+  for (const img of Array.from(document.images)) {
+    if (img.currentSrc) img.setAttribute("src", img.currentSrc);
+    for (const a of ["srcset", "sizes", "loading", "decoding"]) img.removeAttribute(a);
+  }
+  for (const input of Array.from(document.querySelectorAll("input"))) {
+    if (input.type === "checkbox" || input.type === "radio") input.toggleAttribute("checked", input.checked);
+    else if (input.type !== "password" && input.type !== "file") input.setAttribute("value", input.value);
+  }
+  for (const t of Array.from(document.querySelectorAll("textarea"))) t.textContent = t.value;
+  for (const o of Array.from(document.querySelectorAll("option"))) o.toggleAttribute("selected", o.selected);
+  const canvases = Array.from(document.querySelectorAll("canvas")).map((c, index) => {
+    c.setAttribute("data-tc-canvas", String(index));
+    const r = c.getBoundingClientRect();
+    return { index, x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height };
+  });
+
+  const css: { base: string; text: string; media: string; href?: string }[] = [];
+  const collect = (sheet: CSSStyleSheet, media = "") => {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      // cross-origin stylesheet (a font CDN): the caller fetches its text
+      if (sheet.href) css.push({ base: sheet.href, text: "", media: sheet.media?.mediaText || media, href: sheet.href });
+      return;
+    }
+    let text = "";
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSImportRule) {
+        if (rule.styleSheet) collect(rule.styleSheet, rule.media?.mediaText || "");
+        continue;
+      }
+      text += `${rule.cssText}\n`;
+    }
+    css.push({ base: sheet.href || location.href, text, media: sheet.media?.mediaText || media });
+  };
+  for (const sheet of Array.from(document.styleSheets)) if (!sheet.disabled) collect(sheet);
+  for (const sheet of document.adoptedStyleSheets ?? []) collect(sheet);
+
+  const root = document.documentElement.cloneNode(true) as HTMLElement;
+  for (const el of Array.from(root.querySelectorAll("script, noscript, style, link, template, iframe, object, embed, nextjs-portal, [data-nextjs-toast]"))) {
+    // keep icons and fonts' preconnects out too: the snapshot carries its own assets
+    el.remove();
+  }
+  for (const c of Array.from(root.querySelectorAll("canvas[data-tc-canvas]"))) {
+    const i = Number(c.getAttribute("data-tc-canvas"));
+    const img = document.createElement("img");
+    for (const a of Array.from(c.attributes)) if (a.name !== "width" && a.name !== "height") img.setAttribute(a.name, a.value);
+    img.setAttribute("src", `tc-canvas:${i}`);
+    img.setAttribute("alt", "");
+    const r = canvases[i];
+    img.style.width = `${r.w}px`;
+    img.style.height = `${r.h}px`;
+    c.replaceWith(img);
+  }
+  for (const el of [root, ...Array.from(root.querySelectorAll("*"))]) {
+    for (const a of Array.from(el.attributes)) {
+      const n = a.name;
+      if (n.startsWith("on") || n === "data-tc" || n === "data-tc-canvas" || n === "data-tc-hidden") el.removeAttribute(n);
+    }
+    for (const n of ["src", "poster", "xlink:href"]) {
+      const v = el.getAttribute(n);
+      if (v && !/^(data:|#|tc-canvas:)/.test(v)) el.setAttribute(n, abs(v));
+    }
+    const href = el.getAttribute("href");
+    // links can't navigate (the viewer shows a picture of the page), in-SVG references stay
+    if (href !== null && el.tagName.toLowerCase() === "a") {
+      el.setAttribute("data-href", href);
+      el.removeAttribute("href");
+      (el as HTMLElement).style.cursor = "pointer";
+    } else if (href && !href.startsWith("#") && !href.startsWith("data:")) el.setAttribute("href", abs(href));
+  }
+  for (const f of Array.from(root.querySelectorAll("form"))) f.removeAttribute("action");
+  const height = Math.ceil(document.querySelector("[data-tc-frame]")?.getBoundingClientRect().height ?? document.documentElement.scrollHeight);
+  return { url: location.href, html: `<!doctype html>\n${root.outerHTML}`, css, canvases, height };
 }

@@ -23,6 +23,9 @@ import { readJson } from "./body.js";
 import { addShadcnComponents, installIconLibrary, libraryState, shadcnRegistry } from "../core/libraries.js";
 import { loadIcons, searchIcons } from "../core/icons.js";
 import { shadcnStatus } from "../core/shadcn.js";
+import { createSnapshot, sharesDir } from "../share/snapshot.js";
+import { publishSnapshot, reviewSite } from "../share/publish.js";
+import { assertCanvasName } from "../core/scaffold.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -32,6 +35,13 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
   ".png": "image/png",
   ".json": "application/json",
+  ".jpg": "image/jpeg",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".ico": "image/x-icon",
 };
 
 export async function startServer(ws: Workspace) {
@@ -406,6 +416,20 @@ export async function startServer(ws: Workspace) {
         launchEditor(abs, config.editor);
         return json(res, 200, { ok: true });
       }
+      case "GET /api/share/status": {
+        const site = reviewSite();
+        return json(res, 200, { site: site ? site.url : null });
+      }
+      case "POST /api/share/snapshot": {
+        // local: a preview only. Otherwise published to the studio's review site when one is set up.
+        const { canvas, frames, local, title, password } = (await readJson(req)) as { canvas: string; frames?: string[]; local?: boolean; title?: string; password?: string | null };
+        assertCanvasName(canvas);
+        const { dir, manifest } = await createSnapshot(ws, shots, canvas, { frames });
+        const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
+        const site = local ? null : reviewSite();
+        const published = site ? await publishSnapshot(site, dir, manifest, { title, password }) : null;
+        return json(res, 200, { manifest, preview, published });
+      }
       case "POST /api/source": {
         const { canvas, id } = (await readJson(req)) as { canvas: string; id: string };
         const hit = ws.nodeSource(canvas, id);
@@ -430,13 +454,27 @@ export async function startServer(ws: Workspace) {
     fs.createReadStream(file).on("error", () => res.destroy()).pipe(res);
   }
 
+  // ---------- share snapshots, previewed locally ----------
+  function serveShare(res: http.ServerResponse, rest: string) {
+    const root = sharesDir(config.root);
+    let file = path.join(root, decodeURIComponent(rest));
+    if (rest.endsWith("/")) file = path.join(file, "index.html");
+    if (!inside(root, file) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return json(res, 404, { error: "Not found" });
+    // snapshots are static and scriptless: the viewer page is the only script, and frames are sandboxed.
+    // Sandboxed frames have an opaque origin, so their fonts load cross-origin: CORS allows it.
+    res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-cache", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" });
+    fs.createReadStream(file).on("error", () => res.destroy()).pipe(res);
+  }
+
   const server = http.createServer(async (req, res) => {
     try {
       // DNS-rebinding & cross-site protection: only localhost hosts, only our own origin.
       if (!allowedHosts.has(req.headers.host ?? "")) return json(res, 403, { error: "Forbidden host" });
+      const url = new URL(req.url ?? "/", origin);
+      // share snapshots: static and read-only, loaded by sandboxed frames (origin "null")
+      if (req.method === "GET" && url.pathname.startsWith("/share/")) return serveShare(res, url.pathname.slice("/share/".length));
       const reqOrigin = req.headers.origin;
       if (reqOrigin && !allowedOrigins.has(reqOrigin)) return json(res, 403, { error: "Forbidden origin" });
-      const url = new URL(req.url ?? "/", origin);
       if (url.pathname === "/mcp") return await handleMcp(req, res);
       if (url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
       if (req.method === "GET") return serveStatic(res, url.pathname);

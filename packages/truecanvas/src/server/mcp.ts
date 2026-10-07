@@ -9,6 +9,8 @@ import { describeComponent, outlineDoc } from "../core/outline.js";
 import { readDesignTokens } from "../core/tokens.js";
 import { DEVICES, findDevice } from "../core/devices.js";
 import type { Screenshotter } from "./screenshot.js";
+import { createSnapshot } from "../share/snapshot.js";
+import { publishSnapshot, reviewSite } from "../share/publish.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
 A canvas is a .tsx file (canvas/<name>.canvas.tsx) with <Frame> artboards; every edit you make is written to that file as clean TSX and appears live in the user's editor window.
@@ -664,6 +666,38 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         ws.deleteCanvas(canvas);
         if (lastCanvas === canvas) lastCanvas = null;
         return text(`✓ Deleted ${canvas}. The user can restore it from the editor during this session.`);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "share_canvas",
+    {
+      title: "Share canvas",
+      description:
+        "Share a canvas with a client as a link: every frame is rendered by the app and frozen into static HTML (no scripts, no API calls), then published to the studio's review site as a new version of the canvas's link. Without a review site set up, returns a local preview instead. Data the app showed while rendering is in the snapshot: use sample data, never real client data.",
+      inputSchema: {
+        ...canvasArg,
+        frames: z.array(z.string()).optional().describe("Frame names to share; omit for all."),
+        title: z.string().optional().describe("Title the client sees, e.g. \"Homepage, round 2\"."),
+      },
+    },
+    async ({ canvas, frames, title }) => {
+      try {
+        const c = resolveCanvas(canvas);
+        presence(c, "looking", "Preparing a share link");
+        const { dir, manifest } = await createSnapshot(ws, shots, c, { frames });
+        const preview = `http://localhost:${ws.config.port}/share/${encodeURIComponent(c)}/${manifest.id}/`;
+        const notes = [
+          manifest.external.length ? `While rendering, the app called ${manifest.external.join(", ")}: whatever it showed is in the snapshot.` : "",
+          manifest.missing.length ? `${manifest.missing.length} asset(s) couldn't be fetched.` : "",
+        ].filter(Boolean);
+        const site = reviewSite();
+        if (!site) return text([`✓ Snapshot ready (${manifest.frames.length} frames). No review site is set up, so this is a local preview: ${preview}`, "To get client links, the user runs `npx truecanvas share setup`.", ...notes].join("\n"));
+        const published = await publishSnapshot(site, dir, manifest, { title });
+        return text([`✓ Shared ${manifest.frames.length} frame(s): ${published.url}`, `Version ${published.versions} of this link${published.password ? ", password protected" : ""}.`, ...notes].join("\n"));
       } catch (e) {
         return fail(e);
       }

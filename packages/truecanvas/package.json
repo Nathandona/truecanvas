@@ -20,6 +20,10 @@
       "types": "./dist/vite/index.d.ts",
       "default": "./dist/vite/index.js"
     },
+    "./share": {
+      "types": "./dist/share/index.d.ts",
+      "default": "./dist/share/index.js"
+    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"

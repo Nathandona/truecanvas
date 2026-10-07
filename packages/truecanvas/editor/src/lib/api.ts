@@ -112,11 +112,19 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 
+export interface ShareResult {
+  manifest: { id: string; frames: { name: string }[]; missing: string[]; external: string[] };
+  preview: string;
+  published: { url: string; versions: number; skipped: string[]; password: boolean } | null;
+}
+
 export const api = {
   state: () => call<ServerState>("/api/state"),
   canvas: (name: string) => call<{ doc: CanvasDoc; history: { undo: number; redo: number } }>(`/api/canvas?name=${encodeURIComponent(name)}`),
   components: () => call<{ components: ComponentSpec[] }>("/api/components"),
   libraries: () => call<LibraryState>("/api/libraries"),
+  shareStatus: () => call<{ site: string | null }>("/api/share/status"),
+  share: (body: { canvas: string; title?: string; password?: string; local?: boolean }) => call<ShareResult>("/api/share/snapshot", body),
   shadcnRegistry: () => call<{ names: string[]; offline: boolean; status: ShadcnStatus }>("/api/libraries/shadcn"),
   icons: (library: string, q: string, limit = 240) => call<{ total: number; icons: { name: string; svg: string }[] }>(`/api/icons?library=${encodeURIComponent(library)}&q=${encodeURIComponent(q)}&limit=${limit}`),
   installIcons: (id: string) => call<{ ok: boolean; out: string; package: string; state: LibraryState }>("/api/libraries/icons", { id }),
