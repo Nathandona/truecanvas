@@ -350,7 +350,7 @@ export async function startHub(opts: HubOptions) {
         json(res, 200, { ok: true });
         if (opts.onQuit) return opts.onQuit();
         // wait for every project (and its next dev) to exit before leaving
-        void runner.closeAll().finally(() => process.exit(0));
+        void shutdown().finally(() => process.exit(0));
         return;
     }
     const job = /^GET \/api\/hub\/jobs\/(\d+)$/.exec(route);
