@@ -240,7 +240,7 @@ export default function StarterCanvas() {
  * Lazy imports of every catalog component, so the editor can render a single
  * component for Assets thumbnails at /truecanvas/__preview.
  */
-export function componentRegistry(config: TruecanvasConfig, specs: { name: string; file: string; library?: string }[]): string {
+export function componentRegistry(config: TruecanvasConfig, specs: { name: string; file: string; library?: string; defaultExport?: boolean }[]): string {
   const routeDir = routeDirOf(config);
   const lines = specs.map((c) => {
     let from = c.library;
@@ -248,6 +248,8 @@ export function componentRegistry(config: TruecanvasConfig, specs: { name: strin
       from = posix(path.relative(routeDir, path.join(config.root, c.file))).replace(/\.(tsx|ts|jsx|js)$/, "");
       if (!from.startsWith(".")) from = `./${from}`;
     }
+    // default exports are already what lazy() wants
+    if (c.defaultExport) return `  ${JSON.stringify(c.name)}: lazy(() => import(${JSON.stringify(from)})),`;
     return `  ${JSON.stringify(c.name)}: lazy(() => import(${JSON.stringify(from)}).then((m) => ({ default: m[${JSON.stringify(c.name)}] }))),`;
   });
   return `"use client";
@@ -262,7 +264,7 @@ ${lines.join("\n")}
 `;
 }
 
-export function syncComponentRegistry(config: TruecanvasConfig, specs: { name: string; file: string; library?: string }[]) {
+export function syncComponentRegistry(config: TruecanvasConfig, specs: { name: string; file: string; library?: string; defaultExport?: boolean }[]) {
   const file = path.join(routeDirOf(config), "components.tsx");
   return writeIfChanged(file, componentRegistry(config, specs));
 }

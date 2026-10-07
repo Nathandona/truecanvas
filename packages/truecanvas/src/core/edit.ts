@@ -308,10 +308,14 @@ export class CanvasEditor {
   }
 
   private added = new Set<string>();
-  ensureImport(name: string, from: string) {
+  ensureImport(name: string, from: string, isDefault = false) {
     if (this.doc.imports.some((i) => i.names.includes(name) || i.defaultName === name)) return;
     if (this.added.has(name)) return;
     this.added.add(name);
+    if (isDefault) {
+      this.addImportLine(`import ${name} from ${JSON.stringify(from)};`);
+      return;
+    }
     const same = this.doc.imports.find((i) => i.source === from && !i.typeOnly && i.lastSpecifierEnd !== null);
     if (same) {
       this.s.appendLeft(same.lastSpecifierEnd!, `, ${name}`);

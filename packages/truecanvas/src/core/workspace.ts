@@ -723,7 +723,7 @@ export class Workspace {
         const spec = this.catalog.get(cmd.component);
         if (!spec) throw new EditError(`Unknown component "${cmd.component}". Use list_components.`);
         const jsx = componentJsx(spec, cmd.props, cmd.text);
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file), spec.defaultExport);
         ed.insertChild(parent, cmd.index, jsx);
         return `Inserted ${spec.name}`;
       }
@@ -864,7 +864,7 @@ export class Workspace {
         const preset = cmd.preset ? spec.presets?.find((p) => p.name.toLowerCase() === cmd.preset!.toLowerCase()) : undefined;
         if (cmd.preset && !preset) throw new EditError(`${spec.name} has no preset "${cmd.preset}". Presets: ${spec.presets?.map((p) => p.name).join(", ") || "none"}`);
         const props: Record<string, Literal> = { className: "pointer-events-none absolute inset-0 -z-10 h-full w-full", ...(preset ? presetDiff(spec, preset.props) : {}) };
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file), spec.defaultExport);
         // the parent becomes the positioning + stacking context for the background
         if (parent.kind === "element") {
           const cls = parent.props.className;
@@ -897,7 +897,7 @@ export class Workspace {
         if (!prop) throw new EditError(`${spec.name} has no prop "${cmd.prop}".`);
         const values: Literal[] = prop.type === "enum" ? prop.options! : prop.type === "boolean" ? [false, true] : [];
         if (!values.length) throw new EditError(`Prop "${cmd.prop}" is ${prop.typeText}; variants need a union of string literals or a boolean.`);
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file), spec.defaultExport);
         const label = (v: Literal) => (typeof v === "string" ? v[0].toUpperCase() + v.slice(1) : `${prop.name}: ${v}`);
         const rows = indentBlock(values.map((v) => componentJsx(spec, { ...cmd.props, [prop.name]: v }, spec.acceptsChildren ? label(v) : undefined)).join("\n"));
         const right = rightEdge(doc);
@@ -914,7 +914,7 @@ export class Workspace {
           ed.selectPaths.push(existing.path);
           return `Opened ${spec.name}`;
         }
-        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file));
+        ed.ensureImport(spec.name, importSpecifier(this.config.root, rel, spec.file), spec.defaultExport);
         const right = rightEdge(doc);
         const top = doc.frames.length ? Math.min(...doc.frames.map((f) => f.y)) : 0;
         ed.insertFrame(
@@ -1063,7 +1063,7 @@ export class Workspace {
       if (ed.doc.imports.some((i) => i.names.includes(name) || i.defaultName === name)) continue;
       const spec = this.catalog.get(name);
       if (!spec) throw new EditError(`Unknown component <${name}>. It is not imported in the canvas and not in the component catalog. Use list_components.`);
-      ed.ensureImport(name, importSpecifier(this.config.root, rel, spec.file));
+      ed.ensureImport(name, importSpecifier(this.config.root, rel, spec.file), spec.defaultExport);
     }
   }
 

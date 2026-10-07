@@ -93,20 +93,30 @@ export async function analyzeComponents(root: string, globs: string[], libraries
     if (!sf) continue;
     const moduleSymbol = checker.getSymbolAtLocation(sf);
     if (!moduleSymbol) continue;
+    const named = new Set<string>();
+    const found: ComponentSpec[] = [];
     for (let sym of checker.getExportsOfModule(moduleSymbol)) {
+      const exported = sym.getName();
       if (sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
-      const name = sym.getName();
-      if (!/^[A-Z]/.test(name) || !(sym.flags & ts.SymbolFlags.Value)) continue;
       const decl = sym.valueDeclaration ?? sym.declarations?.[0];
       if (!decl) continue;
+      // `export default function Hero()` is a symbol named "default": the function's own name is the component's
+      const own = (decl as TS.Declaration & { name?: TS.Node }).name;
+      const name = sym.getName() === "default" && own && ts.isIdentifier(own) ? own.text : sym.getName();
+      if (!/^[A-Z]/.test(name) || !(sym.flags & ts.SymbolFlags.Value)) continue;
       const type = checker.getTypeOfSymbolAtLocation(sym, decl);
       const sig = type.getCallSignatures()[0];
       if (!sig) continue;
       const ret = checker.typeToString(sig.getReturnType());
       // async server components cannot render inside a client canvas
       if (!/Element|ReactNode|ReactPortal|null|any/.test(ret) || /^Promise</.test(ret)) continue;
-      out.push(describe(ts, checker, sym, decl, sig, library ?? posix(path.relative(root, file)), library));
+      const spec = { ...describe(ts, checker, sym, decl, sig, library ?? posix(path.relative(root, file)), library), name };
+      if (exported === "default") spec.defaultExport = true;
+      else named.add(spec.name);
+      found.push(spec);
     }
+    // `export function Hero` + `export default Hero`: the named import is the one to use
+    out.push(...found.filter((s) => !(s.defaultExport && named.has(s.name))));
   }
   for (const spec of out) applyProfile(spec);
   if (libraries.length) await attachPresets(root, out);

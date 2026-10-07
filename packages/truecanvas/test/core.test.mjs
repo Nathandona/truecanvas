@@ -916,6 +916,23 @@ function project(canvasBody, files = {}) {
   return { proj, ws: w, read, id, canvasFile };
 }
 
+test("catalog: default-exported components are imported as defaults", async () => {
+  const { ws: w, read } = project(`        <p>Hi</p>`, {
+    "components/hero.tsx": `const Hero = ({ title = "Hi" }: { title?: string }) => <h1>{title}</h1>;\nexport default Hero;\n`,
+    "components/both.tsx": `export function Both() { return <p>both</p>; }\nexport default Both;\n`,
+    "components/landing.tsx": `export default function LandingHero() { return <h1>Hi</h1>; }\n`,
+  });
+  const specs = await w.catalog.load();
+  assert.equal(specs.find((c) => c.name === "Hero")?.defaultExport, true);
+  assert.equal(specs.find((c) => c.name === "LandingHero")?.defaultExport, true, "export default function: named after the function");
+  assert.equal(specs.filter((c) => c.name === "Both").length, 1, "named and default: one entry");
+  assert.ok(!specs.find((c) => c.name === "Both").defaultExport, "the named import wins");
+  await w.run({ op: "insert_jsx", canvas: "demo", parent: "Main", jsx: `<Hero title="Yo" />` }, { kind: "user" });
+  await w.run({ op: "insert_jsx", canvas: "demo", parent: "Main", jsx: `<Both />` }, { kind: "user" });
+  assert.match(read(), /^import Hero from "@\/components\/hero";$/m);
+  assert.match(read(), /^import \{ Both \} from "@\/components\/both";$/m);
+});
+
 test("security: ids can't reach files the canvas doesn't show, canvas names can't be paths", async () => {
   const { proj, ws: w, id } = project(`        <p>Hi</p>`);
   const outside = path.join(path.dirname(proj), `outside-${path.basename(proj)}.tsx`);

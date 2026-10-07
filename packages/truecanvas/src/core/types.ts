@@ -132,4 +132,6 @@ export interface ComponentSpec {
   props: PropSpec[];
   acceptsClassName: boolean;
   acceptsChildren: boolean;
+  /** exported as the module's default (`export default Hero`): imported as `import Hero from` */
+  defaultExport?: boolean;
 }
