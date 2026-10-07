@@ -3,10 +3,10 @@ import { cookie } from "./http";
 import type { ReviewEnv } from "./env";
 
 /*
- * Three kinds of access:
+ * Kinds of access (signed-in people are in session.ts):
  * - the studio (Truecanvas uploading, managing links): `Authorization: Bearer <REVIEW_TOKEN>`
  * - a client opening a password-protected link: a signed cookie per link
- * - the same client opening the link's live site, on its own host: a
+ * - anyone with access opening the link's live site, on its own host: a
  *   short-lived token handed out by the viewer, traded for a cookie there
  * Password hashes keep the original review site's scrypt "salt:hash" format,
  * so links moved from it keep their password.
@@ -74,11 +74,20 @@ export function checkLiveToken(env: ReviewEnv, slug: string, version: string, to
   return same(sig, hmac(env, `live-token:${slug}:${version}:${exp}`));
 }
 
-/** The live host's cookie: tied to the password, so changing it locks old sessions out. */
-export const liveCookieValue = (env: ReviewEnv, slug: string, version: string, stored: string) => hmac(env, `live:${slug}:${version}:${stored}`);
+/**
+ * What locks a link's live sites: its password (so changing it locks old
+ * cookies out), its access mode when it's for invitees, nothing when public.
+ */
+export function lockOf(share: { access: "invited" | "password" | "public"; password: string | null }): string | null {
+  if (share.access === "public") return null;
+  return share.access === "password" ? share.password : "access:invited";
+}
 
-export function hasLiveAccess(req: Request, env: ReviewEnv, slug: string, version: string, stored: string | null): boolean {
-  if (!stored) return true;
+/** The live host's cookie, tied to the link's lock. */
+export const liveCookieValue = (env: ReviewEnv, slug: string, version: string, lock: string) => hmac(env, `live:${slug}:${version}:${lock}`);
+
+export function hasLiveAccess(req: Request, env: ReviewEnv, slug: string, version: string, lock: string | null): boolean {
+  if (!lock) return true;
   const value = cookie(req, LIVE_COOKIE);
-  return !!value && same(value, liveCookieValue(env, slug, version, stored));
+  return !!value && same(value, liveCookieValue(env, slug, version, lock));
 }

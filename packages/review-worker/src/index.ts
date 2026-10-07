@@ -4,7 +4,11 @@ import { accessCookie, checkPassword, hashPassword, hasAccess, isStudio } from "
 import type { ReviewEnv } from "./env";
 import { brand, esc, home, json, notFound, page } from "./http";
 import { isLiveHost, liveHome, liveUrl, serveLive, typeOf } from "./live";
+import { createInvite, isEmail, isInvited, listInvites, normalEmail, removeInvite } from "./people";
+import { authHandler, signInOn, viewerOf, type Viewer } from "./session";
+import { sendInvitation, signedIn, signInPage, signOutForm } from "./signin";
 import {
+  ACCESS,
   addThread,
   applyToThread,
   commentsUpdated,
@@ -20,6 +24,7 @@ import {
   putVersion,
   rememberAsset,
   updateShare,
+  type Access,
   type CommentMessage,
   type Live,
   type Share,
@@ -37,12 +42,16 @@ import {
  *   /api/shares/<slug>/live/files     studio: upload a file of a version's live site
  *   /api/shares/<slug>/versions       studio: publish a version
  *   /api/shares/<slug>/comments       studio: comments sync
+ *   /api/shares/<slug>/invites        studio: invite people to a link, list or remove them
+ *   /api/auth/...                     sign-in (Better Auth): email links, sessions
+ *   /signin, /continue, /i/<token>    signing in, by email link or invitation (signin.ts)
+ *   /members, /links                  the studio's members and links
  *   /s/<slug>/...                     clients: viewer, frames, password, comments
  *   <key>-<version><LIVE_HOST_SUFFIX> clients: a version's live site
  */
 
 /** What this site can do beyond the original API. Truecanvas checks it before using them. */
-const features = (env: ReviewEnv) => ["live-url", ...(env.LIVE_HOST_SUFFIX ? ["live-files"] : [])];
+const features = (env: ReviewEnv) => ["live-url", ...(env.LIVE_HOST_SUFFIX ? ["live-files"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
 
 export default {
   async fetch(req: Request, env: ReviewEnv): Promise<Response> {
@@ -51,8 +60,12 @@ export default {
       if (isLiveHost(env, url)) return await serveLive(req, env);
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
       if (parts[0] === "api" && parts[1] === "shares") return await api(req, env, parts.slice(2));
+      if (parts[0] === "api" && parts[1] === "auth") return signInOn(env) ? await authHandler(req, env) : notFound();
       if (parts[0] === "s" && parts[1]) return await link(req, env, parts[1], parts.slice(2));
-      if (!parts.length) return home(env);
+      const own = await signedIn(req, env, parts);
+      if (own) return own;
+      // with sign-in, the studio's home is its links (others are asked to sign in)
+      if (!parts.length) return signInOn(env) ? Response.redirect(new URL("/links", req.url).href, 302) : home(env);
       if (url.pathname === "/favicon.ico" && env.BRAND_LOGO) return Response.redirect(new URL(env.BRAND_LOGO, url).href, 302);
       return notFound();
     } catch (err) {
@@ -63,6 +76,8 @@ export default {
 } satisfies ExportedHandler<ReviewEnv>;
 
 // ---------- studio API ----------
+
+const SIGN_IN_OFF = "Sign-in isn't set up on this review site: set its BETTER_AUTH_SECRET (wrangler secret put BETTER_AUTH_SECRET), STUDIO_EMAILS and STUDIO_EMAIL_FROM.";
 
 async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Response> {
   if (!isStudio(req, env)) return json({ error: "Unauthorized" }, 401);
@@ -81,16 +96,23 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
       return json({ ok: true, brand: brand(env), features: features(env) });
     }
     if (req.method === "POST") {
-      const { project, canvas, title } = (await req.json().catch(() => ({}))) as { project?: string; canvas?: string; title?: string };
+      // `access` sets a new link's access mode; links created without it (older Truecanvas) stay open, as before
+      const { project, canvas, title, access } = (await req.json().catch(() => ({}))) as { project?: string; canvas?: string; title?: string; access?: string };
       if (!project || !canvas) return json({ error: "project and canvas are required" }, 400);
-      const share = (await findShare(env, project, canvas)) ?? (await createShare(env, project, canvas, title || canvas));
-      return json({ slug: share.slug, url: new URL(`/s/${share.slug}`, req.url).href, versions: share.versions.length, password: !!share.password, revoked: share.revoked });
+      if (access !== undefined && !ACCESS.includes(access)) return json({ error: `access is ${ACCESS.join(", ")}` }, 400);
+      if (access === "invited" && !signInOn(env)) return json({ error: SIGN_IN_OFF }, 400);
+      const share = (await findShare(env, project, canvas)) ?? (await createShare(env, project, canvas, title || canvas, access === "invited" ? "invited" : "public"));
+      return json({ slug: share.slug, url: new URL(`/s/${share.slug}`, req.url).href, versions: share.versions.length, password: !!share.password, access: share.access, revoked: share.revoked });
     }
     return notFound();
   }
 
   const share = await getShare(env, parts[0]);
   if (!share) return notFound();
+  // /invites/<email>: one invitation
+  if (parts[1] === "invites" && parts.length === 3 && req.method === "DELETE") {
+    return (await removeInvite(env, share.slug, parts[2])) ? json({ ok: true }) : notFound();
+  }
   switch (route) {
     case "GET <slug>": {
       const { password, ...rest } = share;
@@ -100,15 +122,48 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
       await deleteShare(env, share);
       return json({ ok: true });
     case "PATCH <slug>": {
-      const body = (await req.json().catch(() => ({}))) as { password?: string | null; revoked?: boolean; title?: string };
-      const change: { password?: string | null; revoked?: boolean; title?: string } = {};
+      const body = (await req.json().catch(() => ({}))) as { password?: string | null; access?: string; revoked?: boolean; title?: string };
+      const change: { password?: string | null; access?: Access; revoked?: boolean; title?: string } = {};
+      if (body.access !== undefined) {
+        if (!ACCESS.includes(body.access)) return json({ error: `access is ${ACCESS.join(", ")}` }, 400);
+        change.access = body.access as Access;
+      }
       if (body.password === null || body.password === "") change.password = null;
-      else if (typeof body.password === "string") change.password = hashPassword(body.password);
+      else if (typeof body.password === "string") {
+        change.password = hashPassword(body.password);
+        // a new password protects the link, unless another mode is asked for at the same time
+        change.access ??= "password";
+      }
+      if (change.access === "public") change.password = null;
+      if (change.access === "password" && !(change.password ?? share.password)) return json({ error: "Give the link a password to protect it with one." }, 400);
+      if (change.access === "invited" && !signInOn(env)) return json({ error: SIGN_IN_OFF }, 400);
       if (typeof body.revoked === "boolean") change.revoked = body.revoked;
       if (typeof body.title === "string" && body.title.trim()) change.title = body.title.trim().slice(0, 120);
       await updateShare(env, share.slug, change);
-      const password = change.password !== undefined ? change.password : share.password;
-      return json({ ok: true, password: !!password, revoked: change.revoked ?? share.revoked });
+      const now = (await getShare(env, share.slug))!;
+      return json({ ok: true, password: !!now.password, access: now.access, revoked: now.revoked });
+    }
+    case "GET invites":
+      return json({ invites: await listInvites(env, share.slug) });
+    case "POST invites": {
+      // invites people to the link and emails each their invitation
+      if (!signInOn(env)) return json({ error: SIGN_IN_OFF }, 400);
+      const { emails } = (await req.json().catch(() => ({}))) as { emails?: string[] };
+      const list = [...new Set((Array.isArray(emails) ? emails : []).map((e) => normalEmail(String(e))))];
+      const bad = list.filter((e) => !isEmail(e));
+      if (!list.length || bad.length) return json({ error: bad.length ? `Not an email: ${bad.join(", ")}` : "emails is required" }, 400);
+      if (list.length > 50) return json({ error: "Invite up to 50 people at a time." }, 400);
+      const invited: { email: string; link?: string; error?: string }[] = [];
+      for (const email of list) {
+        const token = await createInvite(env, share.slug, email);
+        try {
+          const sent = await sendInvitation(req, env, email, token, share.title);
+          invited.push({ email, ...(sent.link ? { link: sent.link } : {}) });
+        } catch (err) {
+          invited.push({ email, error: (err as Error).message });
+        }
+      }
+      return json({ ok: true, invited, access: share.access });
     }
     case "GET assets":
       return json({ assets: await knownAssets(env, share.slug) });
@@ -184,7 +239,8 @@ async function link(req: Request, env: ReviewEnv, slug: string, path: string[]):
   if (req.method === "POST") return linkPost(req, env, share, path);
   if (req.method !== "GET" && req.method !== "HEAD") return notFound();
   if (!share || share.revoked || !share.versions.length) return page(env, "This link isn't available", "It may have been removed by the studio. Ask them for a new one.", 404);
-  if (!hasAccess(req, env, slug, share.password)) return path.length ? notFound() : passwordPage(env, share);
+  const gate = await open(req, env, share);
+  if (!gate.ok) return path.length ? notFound() : denied(req, env, share, gate.viewer);
 
   if (!path.length) {
     // the viewer loads everything relative to the link: a <base> keeps that true without a trailing slash
@@ -195,7 +251,7 @@ async function link(req: Request, env: ReviewEnv, slug: string, path: string[]):
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-cache", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" },
     });
   }
-  if (path.length === 1 && path[0] === "manifest.json") return json(manifest(req, env, share, new URL(req.url).searchParams.get("v")));
+  if (path.length === 1 && path[0] === "manifest.json") return json(manifest(req, env, share, new URL(req.url).searchParams.get("v"), gate.viewer ?? (await viewerOf(req, env))));
   if (path.length === 1 && path[0] === "comments.json") return json({ threads: await listThreads(env, slug) });
 
   if (path[0] === "v" && path.length >= 4) {
@@ -222,18 +278,46 @@ async function link(req: Request, env: ReviewEnv, slug: string, path: string[]):
   return notFound();
 }
 
+/**
+ * Can this request open the link? Public links: anyone. Password links: the
+ * password's cookie. Then, for every mode, signed-in studio members and the
+ * people invited to it. The signed-in viewer comes along when it was read.
+ */
+async function open(req: Request, env: ReviewEnv, share: Share): Promise<{ ok: boolean; viewer: Viewer | null }> {
+  if (share.access === "public") return { ok: true, viewer: null };
+  if (share.access === "password" && hasAccess(req, env, share.slug, share.password)) return { ok: true, viewer: null };
+  const viewer = await viewerOf(req, env);
+  return { ok: !!viewer && (viewer.member || (await isInvited(env, share.slug, viewer.email))), viewer };
+}
+
+/** What someone without access sees: the password form, or the sign-in form. */
+function denied(req: Request, env: ReviewEnv, share: Share, viewer: Viewer | null): Response {
+  if (share.access === "password") return passwordPage(env, share);
+  if (viewer)
+    return page(
+      env,
+      esc(share.title),
+      `<div class="stack"><p>You're signed in as ${esc(viewer.email)}, who isn't invited to this design. Ask the studio to invite you, or sign in with another email.</p>${signOutForm(`/s/${share.slug}`)}</div>`,
+      403,
+    );
+  return signInPage(env, req, { next: `/s/${share.slug}`, title: share.title, intro: "This design is shared with invited people. Enter your email and we'll send you a link to open it." });
+}
+
 /** The password form, and clients' comments: a new thread (comments) or a reply (comments/<id>). */
 async function linkPost(req: Request, env: ReviewEnv, share: Share | null, path: string[]): Promise<Response> {
   if (!share || share.revoked) return notFound();
   const slug = share.slug;
   if (path[0] === "comments" && path.length <= 2) {
-    if (!hasAccess(req, env, slug, share.password)) return notFound();
+    const gate = await open(req, env, share);
+    if (!gate.ok) return notFound();
     const body = (await req.json().catch(() => ({}))) as { text?: string; name?: string; frame?: string; version?: string; x?: number; y?: number };
+    // signed in: the comment is theirs, under their account's name; otherwise the name they typed
+    const viewer = gate.viewer ?? (await viewerOf(req, env));
     const text = String(body.text ?? "").trim().slice(0, 4000);
-    const name = String(body.name ?? "").trim().slice(0, 60);
+    const name = viewer ? viewer.name.slice(0, 60) : String(body.name ?? "").trim().slice(0, 60);
     if (!text || !name) return json({ error: "Write a comment and your name." }, 400);
     const now = Date.now();
-    const message = { id: newId(), author: { name, kind: "client" as const }, text, at: now };
+    const message: CommentMessage = { id: newId(), author: { name, kind: viewer?.member ? "studio" : "client" }, text, at: now };
     if (path.length === 2) return (await applyToThread(env, slug, path[1], { message, at: now })) ? json({ ok: true, message }) : notFound();
     if (!share.versions.length) return notFound();
     const version = share.versions.find((v) => v.id === body.version) ?? share.versions[share.versions.length - 1];
@@ -257,14 +341,14 @@ async function linkPost(req: Request, env: ReviewEnv, share: Share | null, path:
     }
     return json({ ok: true, thread });
   }
-  if (!share.password || path.join("/") !== "unlock") return notFound();
+  if (share.access !== "password" || !share.password || path.join("/") !== "unlock") return notFound();
   const form = await req.formData().catch(() => null);
   const password = String(form?.get("password") ?? "");
   if (!checkPassword(password, share.password)) return passwordPage(env, share, true);
   return new Response(null, { status: 303, headers: { location: new URL(`/s/${slug}`, req.url).href, "set-cookie": accessCookie(env, slug, share.password) } });
 }
 
-function manifest(req: Request, env: ReviewEnv, share: Share, wanted: string | null) {
+function manifest(req: Request, env: ReviewEnv, share: Share, wanted: string | null, viewer: Viewer | null) {
   const versions = [...share.versions].sort((a, b) => b.createdAt - a.createdAt);
   const current = versions.find((v) => v.id === wanted) ?? versions[0];
   const live = liveUrl(env, req, share, current);
@@ -280,6 +364,9 @@ function manifest(req: Request, env: ReviewEnv, share: Share, wanted: string | n
     brand: brand(env),
     comments: true,
     ...(live ? { live: { url: live } } : {}),
+    // who's looking: their comments carry this name. `signIn`: the site has sign-in (for a "Sign in" link)
+    viewer: viewer ? { name: viewer.name, email: viewer.email, studio: viewer.member } : null,
+    signIn: signInOn(env),
   };
 }
 
@@ -292,7 +379,7 @@ function passwordPage(env: ReviewEnv, share: Share, wrong = false) {
       <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required ${wrong ? 'aria-invalid="true" aria-describedby="err"' : ""}>
       ${wrong ? '<p id="err" class="err">That password isn\'t right.</p>' : ""}
       <button type="submit">View the design</button>
-    </form>`,
+    </form>${signInOn(env) ? `<p class="alt">Invited, or from the studio? <a href="/signin?next=${encodeURIComponent(`/s/${share.slug}`)}">Sign in with your email</a></p>` : ""}`,
     wrong ? 401 : 200,
   );
 }

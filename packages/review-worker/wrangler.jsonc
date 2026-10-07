@@ -21,13 +21,21 @@
     // Live sites are served from their own hosts: <id><LIVE_HOST_SUFFIX>, e.g.
     // ab12cd34ef-20261007153000-live.example.com. Keep it one level under your
     // domain: free Universal SSL only covers first-level subdomains.
-    "LIVE_HOST_SUFFIX": ""
+    "LIVE_HOST_SUFFIX": "",
+    // Sign-in. The studio's owners (comma separated): members of every link,
+    // and they add or remove other members at /members.
+    "STUDIO_EMAILS": "",
+    // Sign-in and invitation emails come from here: an address on a domain
+    // onboarded to Email Service (wrangler email sending enable your-studio.com).
+    "STUDIO_EMAIL_FROM": ""
   },
+  // Email Service: sign-in links and invitations
+  "send_email": [{ "name": "EMAIL" }],
   // Your domains go in wrangler.local.jsonc (see README), e.g.:
   // "routes": [
   //   { "pattern": "review.example.com", "custom_domain": true },
   //   { "pattern": "*-live.example.com/*", "zone_name": "example.com" }
   // ],
-  // REVIEW_TOKEN is a secret: wrangler secret put REVIEW_TOKEN
+  // Secrets: wrangler secret put REVIEW_TOKEN, and BETTER_AUTH_SECRET for sign-in
   "workers_dev": false
 }

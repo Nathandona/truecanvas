@@ -14,11 +14,12 @@
     "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "better-auth": "1.7.7",
     "truecanvas": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "typescript": "^6.0.3",
-    "wrangler": "4.147.0",
-    "@types/node": "^24.0.0"
+    "wrangler": "4.147.0"
   }
 }

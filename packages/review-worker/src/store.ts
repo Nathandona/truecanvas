@@ -11,6 +11,13 @@ import type { ReviewEnv } from "./env";
 
 export type Live = { files: true } | { url: string };
 
+/**
+ * Who can open a link: "invited" (signed-in invitees and the studio),
+ * "password" (the link's password), "public" (anyone with the link).
+ */
+export type Access = "invited" | "password" | "public";
+export const ACCESS: readonly string[] = ["invited", "password", "public"];
+
 export interface Version {
   id: string;
   createdAt: number;
@@ -28,6 +35,7 @@ export interface Share {
   versions: Version[];
   /** scrypt hash ("salt:hash") when the link needs a password */
   password: string | null;
+  access: Access;
   revoked: boolean;
 }
 
@@ -42,6 +50,7 @@ interface ShareRow {
   title: string;
   created_at: number;
   password: string | null;
+  access: string;
   revoked: number;
 }
 
@@ -57,6 +66,10 @@ const toVersion = (r: VersionRow): Version => ({ id: r.id, createdAt: r.created_
 async function withVersions(env: ReviewEnv, row: ShareRow | null): Promise<Share | null> {
   if (!row) return null;
   const { results } = await env.DB.prepare("SELECT id, created_at, frames, live FROM versions WHERE slug = ? ORDER BY created_at").bind(row.slug).all<VersionRow>();
+  return toShare(row, results.map(toVersion));
+}
+
+function toShare(row: ShareRow, versions: Version[]): Share {
   return {
     slug: row.slug,
     key: row.key,
@@ -65,8 +78,11 @@ async function withVersions(env: ReviewEnv, row: ShareRow | null): Promise<Share
     title: row.title,
     createdAt: row.created_at,
     password: row.password,
+    // a password always protects its link, even if a write (an older migration
+    // script, say) left the column at its default
+    access: row.access === "invited" ? "invited" : row.password ? "password" : "public",
     revoked: !!row.revoked,
-    versions: results.map(toVersion),
+    versions,
   };
 }
 
@@ -80,6 +96,15 @@ export async function getShareByKey(env: ReviewEnv, key: string): Promise<Share 
   return withVersions(env, await env.DB.prepare("SELECT * FROM shares WHERE key = ?").bind(key).first<ShareRow>());
 }
 
+/** Every link, newest first, without their versions: the studio's links page. */
+export async function listShares(env: ReviewEnv): Promise<Omit<Share, "versions">[]> {
+  const { results } = await env.DB.prepare("SELECT * FROM shares ORDER BY created_at DESC").all<ShareRow>();
+  return results.map((row) => {
+    const { versions: _, ...rest } = toShare(row, []);
+    return rest;
+  });
+}
+
 export async function findShare(env: ReviewEnv, project: string, canvas: string): Promise<Share | null> {
   const hit = await env.DB.prepare("SELECT slug FROM share_index WHERE project = ? AND canvas = ?").bind(project, canvas).first<{ slug: string }>();
   return hit ? getShare(env, hit.slug) : null;
@@ -91,24 +116,29 @@ const random = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n
 /** The random tail of a slug, unique per link. */
 export const keyOf = (slug: string) => slug.slice(-10);
 
-export async function createShare(env: ReviewEnv, project: string, canvas: string, title: string): Promise<Share> {
+/**
+ * A new link. Older Truecanvas versions don't send an access mode: their
+ * links stay open (or take a password later), as they always were.
+ */
+export async function createShare(env: ReviewEnv, project: string, canvas: string, title: string, access: Access = "public"): Promise<Share> {
   const kebab = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "design";
   // unguessable: the link is the key
   const slug = `${kebab(project)}-${kebab(canvas)}-${random(10)}`;
   const createdAt = Date.now();
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO shares (slug, key, project, canvas, title, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(slug, keyOf(slug), project, canvas, title, createdAt),
+    env.DB.prepare("INSERT INTO shares (slug, key, project, canvas, title, created_at, access) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(slug, keyOf(slug), project, canvas, title, createdAt, access),
     env.DB.prepare("INSERT OR REPLACE INTO share_index (project, canvas, slug) VALUES (?, ?, ?)").bind(project, canvas, slug),
   ]);
-  return { slug, key: keyOf(slug), project, canvas, title, createdAt, versions: [], password: null, revoked: false };
+  return { slug, key: keyOf(slug), project, canvas, title, createdAt, versions: [], password: null, access, revoked: false };
 }
 
-export async function updateShare(env: ReviewEnv, slug: string, change: { password?: string | null; revoked?: boolean; title?: string }) {
+export async function updateShare(env: ReviewEnv, slug: string, change: { password?: string | null; access?: Access; revoked?: boolean; title?: string }) {
   const sets: string[] = [];
   const values: unknown[] = [];
   if (change.password !== undefined) (sets.push("password = ?"), values.push(change.password));
   if (change.revoked !== undefined) (sets.push("revoked = ?"), values.push(change.revoked ? 1 : 0));
   if (change.title !== undefined) (sets.push("title = ?"), values.push(change.title));
+  if (change.access !== undefined) (sets.push("access = ?"), values.push(change.access));
   if (!sets.length) return;
   await env.DB.prepare(`UPDATE shares SET ${sets.join(", ")} WHERE slug = ?`).bind(...values, slug).run();
 }
@@ -170,6 +200,7 @@ export async function deleteShare(env: ReviewEnv, share: Share) {
     env.DB.prepare("DELETE FROM messages WHERE slug = ?").bind(share.slug),
     env.DB.prepare("DELETE FROM threads WHERE slug = ?").bind(share.slug),
     env.DB.prepare("DELETE FROM assets WHERE slug = ?").bind(share.slug),
+    env.DB.prepare("DELETE FROM invites WHERE slug = ?").bind(share.slug),
     env.DB.prepare("DELETE FROM versions WHERE slug = ?").bind(share.slug),
     env.DB.prepare("DELETE FROM share_index WHERE project = ? AND canvas = ? AND slug = ?").bind(share.project, share.canvas, share.slug),
     env.DB.prepare("DELETE FROM shares WHERE slug = ?").bind(share.slug),

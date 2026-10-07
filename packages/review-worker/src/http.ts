@@ -15,8 +15,12 @@ export function brand(env: ReviewEnv) {
 export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-/** A small branded page: errors, the password form, the live site's gate. */
-export function page(env: ReviewEnv, title: string, body: string, status = 200, headers: Record<string, string> = {}) {
+/**
+ * A small branded page: errors, the password and sign-in forms, the live
+ * site's gate, the studio's members and links. `body` is HTML when it starts
+ * with a tag, plain text otherwise.
+ */
+export function page(env: ReviewEnv, title: string, body: string, status = 200, headers: HeadersInit = {}, opts: { wide?: boolean } = {}) {
   const b = brand(env);
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">${b.logo ? `<link rel="icon" href="${esc(b.logo)}">` : ""}<title>${title} · ${esc(b.name)}</title>
 <style>
@@ -35,11 +39,40 @@ input:focus-visible, button:focus-visible { outline:2px solid #3b82f6; outline-o
 button { font:inherit; font-weight:550; padding:10px 12px; border-radius:10px; border:0; background:var(--text); color:var(--bg); cursor:pointer; transition:transform .12s cubic-bezier(.23,1,.32,1); }
 button:active { transform:scale(.98); }
 .err { color:#dc2626; }
-</style></head><body><main>
+main.wide { max-width:640px; }
+a { color:inherit; }
+.stack { display:flex; flex-direction:column; gap:12px; }
+.alt { margin-top:16px; font-size:14px; }
+.alt form { display:inline; }
+.link-btn { background:none; color:var(--muted); padding:0; font-weight:400; text-decoration:underline; text-underline-offset:2px; }
+.button { display:inline-flex; justify-content:center; font-weight:550; padding:10px 12px; border-radius:10px; background:var(--text); color:var(--bg); text-decoration:none; }
+.dev { font-size:13px; word-break:break-all; padding:10px 12px; border-radius:10px; border:1px dashed var(--line); }
+.rows { list-style:none; margin:16px 0 0; padding:0; border-top:1px solid var(--line); }
+.rows li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+.rows .sub { color:var(--muted); font-size:13px; }
+.tag { font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; white-space:nowrap; }
+.inline { flex-direction:row; }
+.inline input { flex:1; min-width:0; }
+</style></head><body><main${opts.wide ? ' class="wide"' : ""}>
 <div class="brand">${b.logo ? `<img alt="" src="${esc(b.logo)}">` : ""}<span>${esc(b.name)}</span></div>
-<h1>${title}</h1>${body.startsWith("<form") ? body : `<p>${body}</p>`}
+<h1>${title}</h1>${body.startsWith("<") ? body : `<p>${body}</p>`}
 </main></body></html>`;
-  return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...NOINDEX, ...headers } });
+  const h = new Headers(headers);
+  h.set("content-type", "text/html; charset=utf-8");
+  h.set("cache-control", "no-store");
+  h.set("x-robots-tag", NOINDEX["x-robots-tag"]);
+  return new Response(html, { status, headers: h });
+}
+
+/** State-changing forms only count when they come from this site. */
+export function sameOrigin(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  return !!origin && origin === new URL(req.url).origin;
+}
+
+/** A path on this site to come back to after signing in (never another site). */
+export function safeNext(next: string | null | undefined, fallback = "/links"): string {
+  return next && /^\/(?![/\\])[^\s]*$/.test(next) ? next : fallback;
 }
 
 /** The studio's own home: nothing to browse, every design has its private link. */

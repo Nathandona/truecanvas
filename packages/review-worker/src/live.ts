@@ -1,4 +1,4 @@
-import { LIVE_COOKIE, checkLiveToken, hasLiveAccess, liveCookieValue, liveToken } from "./auth";
+import { LIVE_COOKIE, checkLiveToken, hasLiveAccess, liveCookieValue, liveToken, lockOf } from "./auth";
 import type { ReviewEnv } from "./env";
 import { notFound, page } from "./http";
 import { getShareByKey, livePath, type Share, type Version } from "./store";
@@ -6,8 +6,9 @@ import { getShareByKey, livePath, type Share, type Version } from "./store";
 /*
  * Live sites: a version's static build, served on a host of its own,
  * <key>-<version digits><LIVE_HOST_SUFFIX>, so its scripts never share an
- * origin with the review site. When the link has a password, the viewer
- * hands out a short-lived token; the live host trades it for a cookie.
+ * origin with the review site. When the link isn't public (a password, or
+ * invitees only), the viewer hands whoever has access a short-lived token;
+ * the live host trades it for a cookie.
  */
 
 /** The live site's address for a version, or null when it has none. */
@@ -23,7 +24,7 @@ export function liveHome(env: ReviewEnv, req: Request, share: Pick<Share, "key">
 /** The same, for a viewer that has access: with a token that opens a protected link's live site. */
 export function liveUrl(env: ReviewEnv, req: Request, share: Share, version: Version): string | null {
   const home = liveHome(env, req, share, version);
-  if (!home || !share.password || !version.live || "url" in version.live) return home;
+  if (!home || !lockOf(share) || !version.live || "url" in version.live) return home;
   const url = new URL(home);
   url.searchParams.set("tc_access", liveToken(env, share.slug, version.id));
   return url.href;
@@ -43,20 +44,21 @@ export async function serveLive(req: Request, env: ReviewEnv): Promise<Response>
   if (!share || share.revoked || !version?.live || !("files" in version.live)) return gone(env);
 
   // the viewer's token: trade it for a cookie on this host, then drop it from the address
+  const lock = lockOf(share);
   const token = url.searchParams.get("tc_access");
-  if (token !== null && share.password) {
+  if (token !== null && lock) {
     if (!checkLiveToken(env, share.slug, versionId, token)) return locked(env);
     url.searchParams.delete("tc_access");
     return new Response(null, {
       status: 302,
       headers: {
         location: url.pathname + url.search,
-        "set-cookie": `${LIVE_COOKIE}=${liveCookieValue(env, share.slug, versionId, share.password)}; Path=/; Max-Age=${60 * 60 * 12}; HttpOnly; Secure; SameSite=None`,
+        "set-cookie": `${LIVE_COOKIE}=${liveCookieValue(env, share.slug, versionId, lock)}; Path=/; Max-Age=${60 * 60 * 12}; HttpOnly; Secure; SameSite=None`,
         "cache-control": "no-store",
       },
     });
   }
-  if (!hasLiveAccess(req, env, share.slug, versionId, share.password)) return locked(env);
+  if (!hasLiveAccess(req, env, share.slug, versionId, lock)) return locked(env);
 
   let path: string;
   try {
