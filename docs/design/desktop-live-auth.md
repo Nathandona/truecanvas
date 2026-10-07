@@ -1,6 +1,6 @@
 # Desktop app, sign-in and live sessions: technical design
 
-Status: in progress (2026-10-07). First user: Altair studio, sharing work in progress with its clients.
+Status: in progress (2026-10-07). Sign-in (milestone 2) built on the Cloudflare review site. First user: Altair studio, sharing work in progress with its clients.
 
 ## Goal
 
@@ -26,7 +26,8 @@ Electron, because the canvas renders the user's real React components: the windo
 - **Email links** (magic links) for everyone: no passwords to manage. Emails are sent with Cloudflare Email Service from the studio's domain (`STUDIO_EMAIL_FROM`); in local development the link is printed instead.
 - **Studio members**: the emails in `STUDIO_EMAILS` (the owner adds more later from a members page). They see every link of the studio.
 - **Clients**: invited per link (`truecanvas share --invite axel@client.fr`, `share_canvas`, or the Share dialog). The invitation email signs them in and opens the link. They see only the links they were invited to.
-- **Link access**, per link: invited people only (new default), a password (as today, for existing links), or anyone with the link.
+- **Emails open a page with a button**, never a one-click sign-in: magic links are single-use and last 15 minutes, and mail scanners follow links. An invitation (`/i/<token>`, only its hash stored) stays valid until it's removed or replaced, and creates its sign-in link when the person clicks. Asking for a sign-in link answers the same way whether or not the email has access.
+- **Link access**, per link: invited people only (new default), a password (as today, for existing links), or anyone with the link. Links created by older Truecanvas versions (no access in the request) stay open, as before. A password always protects its link.
 - Comments and cursors carry the signed-in person's name, so clients no longer type a name.
 - The Truecanvas CLI and hub keep using the studio token (`REVIEW_TOKEN`) for uploads and sync.
 - Live sites (`*-live` hosts) accept the same signed hand-off as today, now issued for signed-in viewers too.
