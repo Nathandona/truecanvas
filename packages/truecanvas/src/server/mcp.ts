@@ -1,3 +1,4 @@
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Workspace, Command, Actor, Presence } from "../core/workspace.js";
@@ -10,7 +11,7 @@ import { readDesignTokens } from "../core/tokens.js";
 import { DEVICES, findDevice } from "../core/devices.js";
 import type { Screenshotter } from "./screenshot.js";
 import { createSnapshot } from "../share/snapshot.js";
-import { publishSnapshot, reviewSite } from "../share/publish.js";
+import { publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
 A canvas is a .tsx file (canvas/<name>.canvas.tsx) with <Frame> artboards; every edit you make is written to that file as clean TSX and appears live in the user's editor window.
@@ -683,9 +684,13 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         ...canvasArg,
         frames: z.array(z.string()).optional().describe("Frame names to share; omit for all."),
         title: z.string().optional().describe("Title the client sees, e.g. \"Homepage, round 2\"."),
+        live: z
+          .string()
+          .optional()
+          .describe("A live version clients open with \"View live\": the https URL where the app runs, or a static build folder (Next `out/`, Vite `dist/`, relative to the project) that the review site hosts."),
       },
     },
-    async ({ canvas, frames, title }) => {
+    async ({ canvas, frames, title, live }) => {
       try {
         const c = resolveCanvas(canvas);
         presence(c, "looking", "Preparing a share link");
@@ -697,8 +702,18 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         ].filter(Boolean);
         const site = reviewSite();
         if (!site) return text([`✓ Snapshot ready (${manifest.frames.length} frames). No review site is set up, so this is a local preview: ${preview}`, "To get client links, the user runs `npx truecanvas share setup`.", ...notes].join("\n"));
-        const published = await publishSnapshot(site, dir, manifest, { title });
-        return text([`✓ Shared ${manifest.frames.length} frame(s): ${published.url}`, `Version ${published.versions} of this link${published.password ? ", password protected" : ""}.`, ...notes].join("\n"));
+        const liveSite: LiveSite | undefined = live ? (/^https?:\/\//.test(live) ? { url: live } : { dir: path.resolve(ws.config.root, live) }) : undefined;
+        const published = await publishSnapshot(site, dir, manifest, { title, live: liveSite });
+        return text(
+          [
+            `✓ Shared ${manifest.frames.length} frame(s): ${published.url}`,
+            `Version ${published.versions} of this link${published.password ? ", password protected" : ""}.`,
+            published.live ? `Live version: ${published.live}` : "",
+            ...notes,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
       } catch (e) {
         return fail(e);
       }

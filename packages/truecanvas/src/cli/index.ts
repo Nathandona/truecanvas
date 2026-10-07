@@ -15,7 +15,7 @@ import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.j
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
-import { connectReviewSite, deleteShare, reviewSite, updateShare } from "../share/publish.js";
+import { connectReviewSite, deleteShare, reviewSite, updateShare, type LiveSite } from "../share/publish.js";
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 
@@ -34,7 +34,8 @@ Usage
   truecanvas quit      Quit the window and every app it started
   truecanvas desktop   Add Truecanvas to your app launcher (Linux); "desktop remove" undoes it
   truecanvas share [canvas]  Share a canvas as a link for clients (needs truecanvas running).
-                       --password <p>, --no-password, --revoke, --restore, --delete, --title <t>, --local (preview only)
+                       --password <p>, --no-password, --revoke, --restore, --delete, --title <t>, --local (preview only),
+                       --live <url|dir>: a live version clients open with "View live" (where the app runs, or a static build)
   truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
@@ -83,6 +84,7 @@ async function main() {
       restore: { type: "boolean" },
       delete: { type: "boolean" },
       token: { type: "string" },
+      live: { type: "string" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -250,8 +252,18 @@ async function main() {
     const publish = !values.local && !!reviewSite();
     console.log(`  ${c.dim(`Rendering ${canvas} through your app${publish ? " and publishing it" : ""}…`)}`);
     const password = values.password;
-    const res = await fetch(`${base}/api/share/snapshot`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ canvas, local: !publish, title: values.title, password }) });
-    const body = (await res.json()) as { error?: string; preview: string; manifest: { frames: unknown[]; missing: string[]; external: string[] }; published: { url: string; versions: number; skipped: string[]; password: boolean } | null };
+    // a URL where the app runs, or a static build folder (relative to here)
+    const live: LiveSite | undefined = values.live ? (/^https?:\/\//.test(values.live) ? { url: values.live } : { dir: path.resolve(values.live) }) : undefined;
+    if (live && "dir" in live && !fs.existsSync(path.join(live.dir, "index.html"))) {
+      console.error(`  ${c.red("✗")} No index.html in ${live.dir}. Pass a static build folder (Next \`out/\`, Vite \`dist/\`) or the URL where the app runs.`);
+      process.exit(1);
+    }
+    if (live && !publish) {
+      console.error(`  ${c.red("✗")} --live needs a review site: ${c.accent("npx truecanvas share setup")}`);
+      process.exit(1);
+    }
+    const res = await fetch(`${base}/api/share/snapshot`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ canvas, local: !publish, title: values.title, password, live }) });
+    const body = (await res.json()) as { error?: string; preview: string; manifest: { frames: unknown[]; missing: string[]; external: string[] }; published: { url: string; versions: number; skipped: string[]; password: boolean; live: string | null } | null };
     if (!res.ok) {
       console.error(`  ${c.red("✗")} ${body.error}`);
       process.exit(1);
@@ -262,7 +274,9 @@ async function main() {
     if (manifest.missing.length) console.log(`  ${c.yellow("!")} ${manifest.missing.length} asset${manifest.missing.length === 1 ? "" : "s"} couldn't be fetched.`);
     if (published?.skipped.length) console.log(`  ${c.yellow("!")} Left out (over 4.4 MB): ${published.skipped.join(", ")}`);
     if (published) {
-      console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${published.password ? ", password protected" : ""})`)}\n`);
+      console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${published.password ? ", password protected" : ""})`)}`);
+      if (published.live) console.log(`  ${c.green("✓")} Live: ${published.live} ${c.dim(published.password ? "(opens from the link's View live button)" : "")}`);
+      console.log("");
       if (values.open && !values["no-open"]) openBrowser(published.url);
     } else {
       console.log(`  ${c.dim("Preview")} ${c.bold(body.preview)}`);

@@ -1,0 +1,24 @@
+{
+  "name": "truecanvas-review-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A studio's review site for Truecanvas share links, on Cloudflare Workers (D1 + R2): clients look at frozen designs, open the live site and comment.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply truecanvas-review --local",
+    "db:migrate": "wrangler d1 migrations apply truecanvas-review --remote",
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "truecanvas": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "4.147.0",
+    "@types/node": "^24.0.0"
+  }
+}

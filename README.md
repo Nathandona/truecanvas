@@ -114,11 +114,14 @@ The **Truecanvas window** (`npx truecanvas open`) manages several projects in ta
 
 **Share** (top right in the editor), `npx truecanvas share <canvas>`, or your agent's `share_canvas` renders every frame through your app and freezes it into static HTML and CSS: no scripts, so a link can never call your API or leak a session. It's published to your own review site as a new version of that page's link. Clients open it in any browser, with an optional password, and pin comments on the frames. Their threads sync into the canvas's comments while Truecanvas runs; your replies and your agent's (`reply_comment`, `resolve_comment`) go back to the link, under your studio's name. Comments you start in Truecanvas stay internal. `--revoke` takes a link down and `--delete` removes it with its comments.
 
-The review site is `packages/review`, a small Next.js app you deploy once to your Vercel account:
+Add `--live <dir|url>` (or `live` in `share_canvas`) and clients also get **View live** on each frame: the real site at that frame's width, animations and interactions included. Pass a static build (Next `out/`, Vite `dist/`) for the review site to host, or the URL where the app already runs.
 
-1. Create a Vercel project from this repo with **Root Directory** `packages/review`, and add a private **Blob** store and **Upstash for Redis** (both have free tiers).
-2. Set `REVIEW_TOKEN` (a long random string), and optionally `BRAND_NAME` and `BRAND_LOGO` (a logo URL) for your studio's branding.
-3. Add your domain (for example `review.your-studio.com`), then connect Truecanvas: `npx truecanvas share setup https://review.your-studio.com`.
+You deploy the review site once, on your own domain:
+
+- **Cloudflare** (`packages/review-worker`, recommended): Workers, D1 and R2 on the free plan, hosts live sites. See its [README](packages/review-worker/README.md).
+- **Vercel** (`packages/review`): create a project with **Root Directory** `packages/review`, add a private **Blob** store and **Upstash for Redis**, set `REVIEW_TOKEN` (a long random string) and optionally `BRAND_NAME` and `BRAND_LOGO`, then add your domain. Frozen frames and comments only.
+
+Then connect Truecanvas: `npx truecanvas share setup https://review.your-studio.com`.
 
 Without a review site, Share still makes a local preview of what clients would see.
 

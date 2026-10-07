@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // A studio's review site for Truecanvas share links. Copy this file to
+  // wrangler.local.jsonc (ignored by git), set your domain and brand there,
+  // then deploy with: wrangler deploy -c wrangler.local.jsonc
+  "name": "truecanvas-review",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-07",
+  // node:crypto: scrypt password hashes compatible with the original review site
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "truecanvas-review", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "truecanvas-review" }
+  ],
+  "vars": {
+    "BRAND_NAME": "Design review",
+    "BRAND_LOGO": "",
+    // Live sites are served from their own hosts: <id><LIVE_HOST_SUFFIX>, e.g.
+    // ab12cd34ef-20261007153000-live.example.com. Keep it one level under your
+    // domain: free Universal SSL only covers first-level subdomains.
+    "LIVE_HOST_SUFFIX": ""
+  },
+  // Your domains go in wrangler.local.jsonc (see README), e.g.:
+  // "routes": [
+  //   { "pattern": "review.example.com", "custom_domain": true },
+  //   { "pattern": "*-live.example.com/*", "zone_name": "example.com" }
+  // ],
+  // REVIEW_TOKEN is a secret: wrangler secret put REVIEW_TOKEN
+  "workers_dev": false
+}

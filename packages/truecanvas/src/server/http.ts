@@ -24,7 +24,7 @@ import { addShadcnComponents, installIconLibrary, libraryState, shadcnRegistry }
 import { loadIcons, searchIcons } from "../core/icons.js";
 import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
-import { publishSnapshot, reviewSite } from "../share/publish.js";
+import { publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
 import { CommentSync } from "../share/sync.js";
 import { assertCanvasName } from "../core/scaffold.js";
 
@@ -426,12 +426,12 @@ export async function startServer(ws: Workspace) {
       }
       case "POST /api/share/snapshot": {
         // local: a preview only. Otherwise published to the studio's review site when one is set up.
-        const { canvas, frames, local, title, password } = (await readJson(req)) as { canvas: string; frames?: string[]; local?: boolean; title?: string; password?: string | null };
+        const { canvas, frames, local, title, password, live } = (await readJson(req)) as { canvas: string; frames?: string[]; local?: boolean; title?: string; password?: string | null; live?: LiveSite };
         assertCanvasName(canvas);
         const { dir, manifest } = await createSnapshot(ws, shots, canvas, { frames });
         const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
         const site = local ? null : reviewSite();
-        const published = site ? await publishSnapshot(site, dir, manifest, { title, password }) : null;
+        const published = site ? await publishSnapshot(site, dir, manifest, { title, password, live }) : null;
         if (published) commentSync.forget(canvas);
         return json(res, 200, { manifest, preview, published });
       }

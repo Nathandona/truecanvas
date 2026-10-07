@@ -1,6 +1,6 @@
 # Share links: technical design
 
-Status: milestones 1 to 3 built (2026-10-07), live at review.altair-studio.com. First user: Altair studio, sharing designs with clients on the studio's own domain.
+Status: milestones 1 to 3 built (2026-10-07), live at review.altair-studio.com. First user: Altair studio, sharing designs with clients on the studio's own domain. Live sites and the Cloudflare review site (`packages/review-worker`) built locally, not deployed yet.
 
 ## Goal
 
@@ -86,6 +86,20 @@ Snapshots make sharing safe, but a page that fetches data needs data to render. 
    export const mocks = { "GET /api/dossiers": dossiers, "GET /api/me": demoUser };
    ```
 3. **The real API:** for local work only. Share warns when a frame made network requests to anything but the dev server while it was being snapshotted.
+
+## Live sites ("View live")
+
+Frozen frames can't show motion or interaction, so a version can also carry a live site:
+
+- **A static build** (`truecanvas share --live out/`): uploaded with the version and hosted by the review site on a host of its own, `<link key>-<version><LIVE_HOST_SUFFIX>` (e.g. `ab12cd34ef-20261007153000-live.example.com`). A separate origin keeps the site's scripts away from the review site's cookies and API. One level under the domain, because the free certificate only covers first-level subdomains.
+- **A URL** (`--live https://...`): where the app already runs, for apps with a server.
+- **Access:** when the link has a password, the manifest carries a short-lived signed token; the live host trades it for an HttpOnly cookie, so the live site is protected like the link.
+- **Viewer:** each frame gets **View live**: the site in an iframe at the frame's width and a real screen height (900 desktop, 1024 tablet, 844 phone), scaled to fit, scrollable inside, with "Open in a new tab". Comments stay on the frozen frames.
+- **Compatibility:** the review site lists `features` in its token check; Truecanvas checks them before uploading, so an older site fails with a clear message.
+
+## Two review sites
+
+Same API, either can be deployed: `packages/review` (Next.js on Vercel, Upstash Redis + Vercel Blob) and `packages/review-worker` (Cloudflare Workers, D1 + R2, live sites, free for commercial use). In D1 each comment message is its own row, inserted or ignored by id, and a resolution is one UPDATE, so concurrent writes from a client and the studio never overwrite each other. `scripts/migrate.mjs` moves a Vercel site's links, passwords, comments and files over.
 
 ## Milestones
 

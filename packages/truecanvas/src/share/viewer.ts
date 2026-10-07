@@ -2,7 +2,10 @@
  * The share viewer: one static page that reads ./manifest.json and lays the
  * frozen frames out at their canvas positions, with pan and zoom (drag,
  * wheel, pinch, keys). Frames are sandboxed iframes without scripts, under a
- * transparent layer that takes every pointer event. Self-contained: no
+ * transparent layer that takes every pointer event. When the version has a
+ * live site, each frame gets a "View live" button: the real site in a
+ * device-sized window, scripts and animations included, on its own origin.
+ * Self-contained: no
  * build step, no dependencies, so the same file works locally and on a
  * review site.
  */
@@ -133,7 +136,22 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   #pop { left: 8px !important; right: 8px; top: auto !important; bottom: 8px; width: auto; max-height: 60dvh; }
   #panel { left: 8px; right: 8px; top: 56px; bottom: 68px; width: auto; }
 }
-@media (prefers-reduced-motion: reduce) { .frame-box iframe { transition: none; } }
+/* live site */
+.live-btn { height: 22px; min-width: 0; margin-left: 8px; padding: 0 8px 0 6px; gap: 4px; border-radius: 6px; vertical-align: middle;
+  background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; }
+.live-btn:hover { background: var(--accent); color: #fff; }
+#live { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px;
+  background: rgba(12,12,11,.6); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fade-in .16s var(--ease-out); }
+@keyframes fade-in { from { opacity: 0; } }
+.live-bar { display: flex; align-items: center; gap: 10px; max-width: 100%; height: 40px; padding: 0 6px 0 14px; border-radius: 12px;
+  background: var(--panel-solid); border: 1px solid var(--line); box-shadow: 0 8px 28px -10px rgba(0,0,0,.35); }
+.live-bar b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.live-bar a { color: var(--text); white-space: nowrap; text-decoration: none; padding: 0 8px; height: 30px; display: inline-flex; align-items: center; border-radius: 8px; }
+.live-bar a:hover { background: var(--line); }
+.live-device { position: relative; overflow: hidden; border-radius: 10px; background: #fff; box-shadow: 0 30px 80px -20px rgba(0,0,0,.6); animation: pop-in .2s var(--ease-out); }
+.live-device iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: #fff; }
+@media (max-width: 640px) { .live-bar .meta { display: none; } }
+@media (prefers-reduced-motion: reduce) { .frame-box iframe { transition: none; } #live, .live-device { animation: none; } }
 </style>
 </head>
 <body>
@@ -144,6 +162,10 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 </header>
 <aside id="panel" hidden aria-label="Comments"><div class="panel-head"><span>Comments</span><button id="panel-close" aria-label="Close">✕</button></div><div class="panel-list" id="panel-list"></div></aside>
 <div id="pop" hidden role="dialog" aria-label="Comment"></div>
+<div id="live" hidden role="dialog" aria-modal="true" aria-label="Live site">
+  <div class="live-bar"><b id="live-name"></b><span class="meta" id="live-size"></span><a id="live-tab" target="_blank" rel="noopener">Open in a new tab</a><button id="live-close" aria-label="Close live site" title="Close (Esc)">✕</button></div>
+  <div class="live-device" id="live-device"></div>
+</div>
 <footer><div class="pill">
   <button id="out" aria-label="Zoom out" title="Zoom out (-)">−</button>
   <button id="zoom" aria-label="Zoom to fit" title="Zoom to fit (1)">100%</button>
@@ -265,10 +287,12 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     const el = document.createElement("div");
     el.className = "frame";
     el.style.cssText = "left:" + (f.x - minX) + "px;top:" + (f.y - minY) + "px;width:" + f.width + "px;height:" + f.height + "px";
-    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + "</div>" +
+    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="Open the live site at this width"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>View live</button>' : "") + "</div>" +
       '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe sandbox title="' + esc(f.name) + '" scrolling="no" loading="lazy" src="' + esc(f.html) + '"></iframe></div>';
     const iframe = el.querySelector("iframe");
     iframe.addEventListener("load", () => iframe.classList.add("ready"));
+    const liveBtn = el.querySelector(".live-btn");
+    if (liveBtn) liveBtn.onclick = (e) => { e.stopPropagation(); openLive(f); };
     el.dataset.name = f.name;
     world.appendChild(el);
     labels.push(el.querySelector(".frame-label"));
@@ -326,8 +350,8 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   let pinch = null;
   let moved = false, downAt = null;
   stage.addEventListener("pointerdown", (e) => {
-    // pins are buttons: they take their own clicks
-    if (e.target.closest && e.target.closest(".pin")) return;
+    // pins and View live are buttons: they take their own clicks
+    if (e.target.closest && e.target.closest(".pin, .live-btn")) return;
     stage.setPointerCapture(e.pointerId);
     moved = false;
     downAt = { x: e.clientX, y: e.clientY };
@@ -385,6 +409,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   document.getElementById("out").onclick = () => zoomAt(z / 1.25, ...center());
   zoomLabel.onclick = () => (tall() ? fitWidth() : fit());
   addEventListener("keydown", (e) => {
+    if (liveOpen()) { if (e.key === "Escape") closeLive(); return; }
     if (e.target.closest && e.target.closest("input, textarea, select")) return;
     if (e.key === "Escape") { closePop(); setCommenting(false); return; }
     if ((e.key === "c" || e.key === "C") && canComment && !e.metaKey && !e.ctrlKey) { setCommenting(!commenting); return; }
@@ -395,6 +420,53 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     else if (e.key === "2") fitWidth();
   });
   addEventListener("resize", apply);
+
+  // ---------- live site: the real thing, at the frame's width ----------
+  const liveBox = document.getElementById("live");
+  const liveDevice = document.getElementById("live-device");
+  let liveFrame = null, liveReturn = null;
+  const liveOpen = () => !liveBox.hidden;
+  // a realistic screen for the width: desktop, tablet or phone
+  const viewportHeight = (w) => (w >= 1024 ? 900 : w > 500 ? 1024 : 844);
+  function sizeLive() {
+    if (!liveFrame) return;
+    const w = liveFrame.width, h = viewportHeight(w);
+    const s = Math.min(1, (innerWidth - 32) / w, (innerHeight - 32 - 50) / h);
+    liveDevice.style.width = Math.round(w * s) + "px";
+    liveDevice.style.height = Math.round(h * s) + "px";
+    const iframe = liveDevice.querySelector("iframe");
+    iframe.style.width = w + "px";
+    iframe.style.height = h + "px";
+    iframe.style.transform = s < 1 ? "scale(" + s + ")" : "";
+    document.getElementById("live-size").textContent = w + " × " + h + (s < 1 ? " · " + Math.round(s * 100) + "%" : "");
+  }
+  function openLive(f) {
+    liveFrame = f;
+    liveReturn = document.activeElement;
+    liveDevice.textContent = "";
+    // its own origin: scripts run there, never on the review site
+    const iframe = document.createElement("iframe");
+    iframe.title = "Live site: " + f.name;
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    iframe.src = manifest.live.url;
+    liveDevice.appendChild(iframe);
+    document.getElementById("live-name").textContent = f.name;
+    document.getElementById("live-tab").href = manifest.live.url;
+    liveBox.hidden = false;
+    sizeLive();
+    document.getElementById("live-close").focus();
+  }
+  function closeLive() {
+    liveBox.hidden = true;
+    liveDevice.textContent = "";
+    liveFrame = null;
+    if (liveReturn && liveReturn.focus) liveReturn.focus();
+  }
+  document.getElementById("live-close").onclick = closeLive;
+  // a click on the backdrop closes it too
+  liveBox.addEventListener("click", (e) => { if (e.target === liveBox) closeLive(); });
+  addEventListener("resize", sizeLive);
 
   // ---------- comments (on a review site: the manifest says so) ----------
   var canComment = !!manifest.comments;

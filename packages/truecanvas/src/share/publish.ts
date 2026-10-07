@@ -47,12 +47,33 @@ export interface Published {
   /** files over the upload limit, left out */
   skipped: string[];
   password: boolean;
+  /** the version's live site, when it has one */
+  live: string | null;
 }
+
+/**
+ * A live version of the design, opened from the link's "View live" button:
+ * the address where the app already runs, or a static build (Next `out/`,
+ * Vite `dist/`) that the review site hosts on a host of its own.
+ */
+export type LiveSite = { url: string } | { dir: string };
 
 /** Vercel functions take request bodies up to 4.5 MB. */
 const MAX_FILE = 4.4 * 1024 * 1024;
 
-export async function publishSnapshot(site: ReviewSite, dir: string, manifest: ShareManifest, opts: { title?: string; password?: string | null } = {}): Promise<Published> {
+export async function publishSnapshot(site: ReviewSite, dir: string, manifest: ShareManifest, opts: { title?: string; password?: string | null; live?: LiveSite } = {}): Promise<Published> {
+  // before uploading anything: can this review site take a live site?
+  if (opts.live) {
+    const { features = [] } = (await request(site, "GET", "/api/shares")) as { features?: string[] };
+    const needed = "url" in opts.live ? "live-url" : "live-files";
+    if (!features.includes(needed))
+      throw new Error(
+        "url" in opts.live
+          ? "This review site doesn't support live sites yet. Update it (packages/review-worker) to share a live URL."
+          : "This review site doesn't host live sites. Deploy packages/review-worker with LIVE_HOST_SUFFIX set, or pass the URL where the site runs instead.",
+      );
+    if ("dir" in opts.live && !fs.statSync(opts.live.dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`No build folder at ${opts.live.dir}`);
+  }
   const share = (await request(site, "POST", "/api/shares", { project: manifest.project, canvas: manifest.canvas, title: opts.title ?? manifest.canvas })) as { slug: string; password: boolean };
   const base = `/api/shares/${share.slug}`;
   const known = new Set(((await request(site, "GET", `${base}/assets`)) as { assets: string[] }).assets);
@@ -78,10 +99,30 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
   await Promise.all(Array.from({ length: 4 }, worker));
   if (skipped.some((s) => s.endsWith(".html"))) throw new Error(`A frame is too large to upload (over 4.4 MB): ${skipped.filter((s) => s.endsWith(".html")).join(", ")}`);
 
+  // the live site's files, under the version they belong to
+  if (opts.live && "dir" in opts.live) {
+    const liveDir = opts.live.dir;
+    const liveFiles = walk(liveDir);
+    const pending = [...liveFiles];
+    const liveWorker = async () => {
+      for (let rel = pending.shift(); rel; rel = pending.shift()) {
+        const body = fs.readFileSync(path.join(liveDir, rel));
+        if (body.length > MAX_FILE) {
+          skipped.push(`live/${rel}`);
+          continue;
+        }
+        await request(site, "PUT", `${base}/live/files?version=${manifest.id}`, body, { "x-path": rel, "content-type": contentType(rel) });
+        uploaded++;
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, liveWorker));
+  }
+
   const change = { ...(opts.password !== undefined ? { password: opts.password } : {}), ...(opts.title ? { title: opts.title } : {}) };
   if (Object.keys(change).length) await request(site, "PATCH", base, change);
-  const done = (await request(site, "POST", `${base}/versions`, { id: manifest.id, createdAt: manifest.createdAt, frames: manifest.frames })) as { url: string; versions: number };
-  return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password: opts.password === undefined ? share.password : !!opts.password };
+  const live = opts.live ? ("url" in opts.live ? { url: opts.live.url } : { files: true }) : undefined;
+  const done = (await request(site, "POST", `${base}/versions`, { id: manifest.id, createdAt: manifest.createdAt, frames: manifest.frames, live })) as { url: string; versions: number; live?: string | null };
+  return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password: opts.password === undefined ? share.password : !!opts.password, live: done.live ?? null };
 }
 
 /** Deletes a canvas's link with its versions, files and comments. */
@@ -118,12 +159,35 @@ async function request(site: ReviewSite, method: string, route: string, body?: u
   return data;
 }
 
+/** Every file under a folder, as posix paths relative to it (dotfiles left out). */
+function walk(root: string, rel = ""): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const child = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...walk(root, child));
+    else if (entry.isFile()) out.push(child);
+  }
+  return out;
+}
+
 function contentType(file: string): string {
   const ext = path.extname(file).slice(1).toLowerCase();
   const types: Record<string, string> = {
     html: "text/html; charset=utf-8",
+    css: "text/css; charset=utf-8",
+    js: "text/javascript; charset=utf-8",
+    mjs: "text/javascript; charset=utf-8",
+    json: "application/json",
+    map: "application/json",
+    txt: "text/plain; charset=utf-8",
+    xml: "application/xml",
+    webmanifest: "application/manifest+json",
+    wasm: "application/wasm",
+    pdf: "application/pdf",
     png: "image/png",
     jpg: "image/jpeg",
+    jpeg: "image/jpeg",
     webp: "image/webp",
     avif: "image/avif",
     gif: "image/gif",
