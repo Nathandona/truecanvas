@@ -13,6 +13,7 @@ import { ProjectStore, discover, listDirs } from "./projects.js";
 import { Runner, capture, cloneJob, createJob, getJob, setupJob } from "./runner.js";
 import { readJson } from "../server/body.js";
 import { EditError } from "../core/edit.js";
+import { removeHubFile, writeHubFile } from "./locate.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -27,7 +28,32 @@ const HUB_INSTRUCTIONS = `Truecanvas hub: several projects, each a Next.js or Vi
 Your tools act on the current project (the active tab in the Truecanvas window, unless you pick one with open_project).
 Use list_projects to see them. All other tools are the regular Truecanvas canvas tools for that project.`;
 
-export async function startHub(opts: { port: number; cli: string }) {
+/** A client's comment that just reached one of the projects (through share-link sync). */
+export interface HubNotice {
+  path: string;
+  project: string;
+  canvas: string;
+  name: string;
+  text: string;
+}
+
+export interface HubOptions {
+  port: number;
+  /** the truecanvas CLI that starts projects without their own copy */
+  cli: string;
+  /** stop a project's app after this many minutes unused (not the active tab, no agent calls); 0 never. Default 30, or TRUECANVAS_IDLE_MINUTES. */
+  idleMinutes?: number;
+  /** a problem to show at the top of the window (the desktop app: Node isn't installed) */
+  notice?: string | null;
+  /** a client commented (the desktop app shows a notification) */
+  onNotice?: (n: HubNotice) => void;
+  /** Quit from the window: the host decides (the desktop app quits itself). Default: stop every project and exit. */
+  onQuit?: () => void;
+  /** handle SIGINT and SIGTERM (default true; a host with its own lifecycle passes false) */
+  signals?: boolean;
+}
+
+export async function startHub(opts: HubOptions) {
   const store = new ProjectStore();
   const editorDir = fileURLToPath(new URL("./editor/", import.meta.url));
   const pkgDir = path.resolve(path.dirname(opts.cli), "..");
@@ -41,13 +67,31 @@ export async function startHub(opts: { port: number; cli: string }) {
     for (const res of clients) res.write(`data: {"type":"state"}\n\n`);
     for (const fn of toolListeners) fn();
   };
-  const runner = new Runner(opts.cli, broadcast);
+  const runner = new Runner(opts.cli, broadcast, origin);
+
+  // ---------- idle projects: stop their app to free memory ----------
+  const idleMs = (opts.idleMinutes ?? Number(process.env.TRUECANVAS_IDLE_MINUTES ?? 30)) * 60_000;
+  const lastUsed = new Map<string, number>();
+  const used = (dir: string | null) => {
+    if (dir) lastUsed.set(dir, Date.now());
+  };
+  if (idleMs > 0)
+    setInterval(() => {
+      // the active tab is in use as long as a window shows it
+      if (clients.size) used(active);
+      for (const [dir, run] of runner.running) {
+        if ((dir === active && clients.size) || run.status === "starting") continue;
+        if (Date.now() - (lastUsed.get(dir) ?? run.startedAt) < idleMs) continue;
+        lastUsed.delete(dir);
+        void runner.close(dir);
+      }
+    }, Math.min(60_000, idleMs)).unref();
   setInterval(() => {
     for (const res of clients) res.write(": ping\n\n");
   }, 20_000).unref();
 
-  /** a request (from the CLI) to show a project's tab in the window */
-  let focus: { path: string; at: number } | null = null;
+  /** a request (from the CLI, or a notification) to show a project's tab in the window, and maybe one of its canvases */
+  let focus: { path: string; at: number; canvas?: string } | null = null;
 
   async function state() {
     const memory = await runner.memory();
@@ -55,6 +99,8 @@ export async function startHub(opts: { port: number; cli: string }) {
       origin,
       active,
       focus,
+      notice: opts.notice ?? null,
+      liveSession: { available: false },
       projects: store.all().map((p) => {
         const r = runner.running.get(p.path);
         return { ...p, running: r ? { status: r.status, editor: `http://localhost:${r.editorPort}`, app: `http://localhost:${r.appPort}`, error: r.error, memory: memory[p.path] ?? null } : null };
@@ -101,6 +147,7 @@ export async function startHub(opts: { port: number; cli: string }) {
     };
     /** Runs a call on the project, reconnecting once if its session went away. */
     const withUpstream = async <T,>(dir: string, fn: (c: Client) => Promise<T>): Promise<T | null> => {
+      used(dir);
       for (let attempt = 0; attempt < 2; attempt++) {
         const up = upstream(dir);
         if (!up) return null;
@@ -228,6 +275,7 @@ export async function startHub(opts: { port: number; cli: string }) {
       case "POST /api/hub/open": {
         store.touch(body.path);
         active = body.path;
+        used(body.path);
         if (body.focus) focus = { path: body.path, at: Date.now() };
         let run;
         try {
@@ -245,7 +293,9 @@ export async function startHub(opts: { port: number; cli: string }) {
         broadcast();
         return json(res, 200, { ok: true });
       case "POST /api/hub/active":
+        used(active);
         active = body.path || null;
+        used(active);
         broadcast();
         return json(res, 200, { ok: true });
       case "POST /api/hub/forget":
@@ -287,8 +337,18 @@ export async function startHub(opts: { port: number; cli: string }) {
         broadcast();
         return json(res, 200, { ok: true });
       }
+      case "POST /api/hub/notify": {
+        // a project's Truecanvas reporting a client comment from a share link
+        const p = store.all().find((x) => x.path === body.path);
+        if (!p || !body.name || !body.canvas) return json(res, 400, { error: "Unknown project or comment" });
+        opts.onNotice?.({ path: p.path, project: p.name, canvas: String(body.canvas), name: String(body.name).slice(0, 80), text: String(body.text ?? "").slice(0, 300) });
+        return json(res, 200, { ok: true });
+      }
+      case "POST /api/hub/session":
+        return json(res, 501, { error: "Live sessions arrive with sign-in on the review site." });
       case "POST /api/hub/quit":
         json(res, 200, { ok: true });
+        if (opts.onQuit) return opts.onQuit();
         // wait for every project (and its next dev) to exit before leaving
         void runner.closeAll().finally(() => process.exit(0));
         return;
@@ -336,14 +396,36 @@ export async function startHub(opts: { port: number; cli: string }) {
     server.once("error", reject);
     server.listen(opts.port, "127.0.0.1", resolve);
   });
+  writeHubFile(opts.port);
   const shutdown = () => {
     server.close();
+    removeHubFile();
     return runner.closeAll();
   };
-  const exit = () => void shutdown().finally(() => process.exit(0));
-  process.once("SIGINT", exit);
-  process.once("SIGTERM", exit);
-  return { origin, shutdown };
+  if (opts.signals !== false) {
+    const exit = () => void shutdown().finally(() => process.exit(0));
+    process.once("SIGINT", exit);
+    process.once("SIGTERM", exit);
+  }
+  return {
+    origin,
+    shutdown,
+    state,
+    /** shows a project's tab in the window (and a canvas, when given) */
+    focus(dir: string, canvas?: string) {
+      active = dir;
+      used(dir);
+      focus = { path: dir, at: Date.now(), ...(canvas ? { canvas } : {}) };
+      broadcast();
+    },
+    /** milestone 3: start or stop a live session for the active project */
+    liveSession: {
+      available: false as boolean,
+      async toggle(): Promise<void> {
+        throw new Error("Live sessions arrive with sign-in on the review site.");
+      },
+    },
+  };
 }
 
 const ICON_MIME: Record<string, string> = { ".ico": "image/x-icon", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };

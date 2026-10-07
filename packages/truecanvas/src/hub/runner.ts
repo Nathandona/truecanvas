@@ -4,7 +4,22 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { packageSpec } from "../cli/setup.js";
-import { detectPm, addArgs, shellSafe, toolEnv, type Pm } from "../core/pm.js";
+import { detectPm, addArgs, nodeBin, shellSafe, toolEnv, type Pm } from "../core/pm.js";
+
+const NO_NODE = "Node.js wasn't found. Install it (nodejs.org, or your package manager), then restart Truecanvas: your projects run on your own Node.";
+
+/** The Node to run projects and tools with. */
+function node(): string {
+  const bin = nodeBin();
+  if (!bin) throw new Error(NO_NODE);
+  return bin;
+}
+
+/** The project's own Truecanvas CLI when it has one (so the editor matches its Next or Vite plugin), else ours. */
+export function projectCli(dir: string, fallback: string): string {
+  const local = path.join(dir, "node_modules", "truecanvas", "dist", "cli.js");
+  return fs.existsSync(local) ? local : fallback;
+}
 
 export interface Running {
   path: string;
@@ -39,6 +54,8 @@ export class Runner {
   constructor(
     private cli: string,
     private onChange: () => void,
+    /** the hub's URL, for projects to report client comments to it */
+    private hubUrl?: string,
   ) {}
 
   private opening = new Map<string, Promise<Running>>();
@@ -69,10 +86,11 @@ export class Runner {
 
   private async start(dir: string): Promise<Running> {
     if (!fs.existsSync(path.join(dir, "package.json"))) throw new Error(`${dir} isn't there anymore (or has no package.json).`);
+    const bin = node();
     const [editorPort, appPort] = await this.allocatePorts();
-    const proc = spawn(process.execPath, [this.cli, "dev", "--no-open", "--port", String(editorPort), "--app", `http://localhost:${appPort}`], {
+    const proc = spawn(bin, [projectCli(dir, this.cli), "dev", "--no-open", "--port", String(editorPort), "--app", `http://localhost:${appPort}`], {
       cwd: dir,
-      env: toolEnv({ FORCE_COLOR: "0", TRUECANVAS_HUB: "1" }),
+      env: toolEnv({ FORCE_COLOR: "0", TRUECANVAS_HUB: "1", ...(this.hubUrl ? { TRUECANVAS_HUB_URL: this.hubUrl } : {}) }),
       stdio: ["ignore", "pipe", "pipe"],
       // its own process group: closing the project also stops the next dev it started
       detached: process.platform !== "win32",
@@ -263,7 +281,7 @@ export function setupJob(dir: string, pkgDir: string, cli: string): Job {
     const pm = packageManager(dir);
     const source = await packageSpec(pkgDir, (cmd, args, cwd) => run(job, cmd, args, cwd));
     await install(job, pm.cmd, [...pm.add, source], dir);
-    await run(job, process.execPath, [cli, "init"], dir);
+    await run(job, node(), [projectCli(dir, cli), "init"], dir);
     return dir;
   });
 }
@@ -284,7 +302,7 @@ export function createJob(name: string, parent: string, pkgDir: string, cli: str
     await run(job, "npx", ["--yes", "create-next-app@latest", safe, "--ts", "--tailwind", "--app", "--eslint", "--no-src-dir", "--import-alias", "@/*", `--use-${pm}`, "--turbopack", "--yes"], parentDir);
     const source = await packageSpec(pkgDir, (cmd, args, cwd) => run(job, cmd, args, cwd));
     await install(job, pm, addArgs(pm, [source], true), dir);
-    await run(job, process.execPath, [cli, "init"], dir);
+    await run(job, node(), [projectCli(dir, cli), "init"], dir);
     return dir;
   });
 }
@@ -294,7 +312,7 @@ export function capture(cmd: string, args: string[], cwd: string): Promise<{ ok:
   return new Promise((resolve) => {
     // pnpm is a .cmd on Windows: through a shell there (git and gh are .exe and work either way)
     const safe = shellSafe(cmd, args);
-    execFile(safe.cmd, safe.args, { shell: safe.shell, cwd, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
+    execFile(safe.cmd, safe.args, { shell: safe.shell, cwd, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, env: toolEnv({ GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" }) }, (err, stdout, stderr) =>
       resolve({ ok: !err, out: err ? (stderr || err.message).trim() : stdout }),
     );
   });
@@ -324,7 +342,7 @@ export function cloneJob(repo: string, parent: string, pkgDir: string, cli: stri
     if (!("truecanvas" in { ...pkg.dependencies, ...pkg.devDependencies })) {
       const source = await packageSpec(pkgDir, (cmd, args, cwd) => run(job, cmd, args, cwd));
       await install(job, pm.cmd, [...pm.add, source], dir);
-      await run(job, process.execPath, [cli, "init"], dir);
+      await run(job, node(), [projectCli(dir, cli), "init"], dir);
     } else job.log.push("Truecanvas is already part of this project.");
     return dir;
   });

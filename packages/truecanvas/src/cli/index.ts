@@ -12,6 +12,7 @@ import type { Framework } from "../core/config.js";
 import { createRequire } from "node:module";
 import { startHub } from "../hub/server.js";
 import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.js";
+import { hubPort } from "../hub/locate.js";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
@@ -104,11 +105,11 @@ async function main() {
     const deps = { ...readPackage(root)?.dependencies, ...readPackage(root)?.devDependencies };
     if (!("next" in deps) && !("vite" in deps && "react" in deps)) {
       // not in an app: the projects window
-      return openWindow(cli, values.port ? Number(values.port) : 4800);
+      return openWindow(cli, values.port ? Number(values.port) : hubPort());
     }
     if (!(await ensureSetup(root, pkgDir, version, yes))) return;
     // the window is open: show the project there
-    if (await openInWindow(root, Number(values.port ?? 4800))) return;
+    if (await openInWindow(root, values.port ? Number(values.port) : hubPort())) return;
     // run the project's own Truecanvas, so editor and Next plugin are the same version
     const local = path.join(root, "node_modules", "truecanvas", "dist", "cli.js");
     if (fs.existsSync(local) && fs.realpathSync(local) !== fs.realpathSync(cli)) {
@@ -161,9 +162,9 @@ async function main() {
     }
     return;
   }
-  if (command === "open") return openWindow(cli, values.port ? Number(values.port) : 4800);
+  if (command === "open") return openWindow(cli, values.port ? Number(values.port) : hubPort());
   if (command === "quit") {
-    const url = `http://localhost:${values.port ?? 4800}`;
+    const url = `http://localhost:${values.port ?? hubPort()}`;
     const up = await fetch(`${url}/api/hub/state`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok).catch(() => false);
     if (!up) return console.log("Truecanvas isn't running.");
     await fetch(`${url}/api/hub/quit`, { method: "POST" }).catch(() => {});

@@ -26,6 +26,12 @@ interface RemoteThread {
   updatedAt: number;
 }
 
+export interface ClientMessage {
+  canvas: string;
+  name: string;
+  text: string;
+}
+
 const EVERY = 20_000;
 const LOOKUP_EVERY = 5 * 60_000;
 
@@ -37,7 +43,11 @@ export class CommentSync {
   private running: Promise<void> | null = null;
   private off: (() => void) | null = null;
 
-  constructor(private ws: Workspace) {}
+  constructor(
+    private ws: Workspace,
+    /** a client's new thread or reply just arrived (the desktop app turns it into a notification) */
+    private onClientMessage?: (e: ClientMessage) => void,
+  ) {}
 
   start() {
     this.timer = setInterval(() => void this.syncAll(), EVERY);
@@ -100,6 +110,10 @@ export class CommentSync {
 
     // 1. the link's threads into the comments file
     const dismissed = this.ws.comments.dismissed(canvas);
+    const arrived: ClientMessage[] = [];
+    const fromClient = (m: RemoteThread["messages"][number]) => {
+      if (m.author.kind === "client") arrived.push({ canvas, name: m.author.name, text: m.text });
+    };
     this.ws.comments.merge(canvas, (local) => {
       let changed = false;
       for (const r of remote) {
@@ -107,6 +121,7 @@ export class CommentSync {
         const l = local.find((t) => t.id === r.id);
         if (!l) {
           local.push(fromRemote(r, slug));
+          r.messages.forEach(fromClient);
           changed = true;
           continue;
         }
@@ -115,6 +130,7 @@ export class CommentSync {
         for (const m of r.messages) {
           if (have.has(m.id)) continue;
           l.messages.push(message(m));
+          fromClient(m);
           changed = true;
         }
         if (changed) l.messages.sort((a, b) => a.at - b.at);
@@ -128,6 +144,7 @@ export class CommentSync {
       }
       return changed;
     });
+    if (this.onClientMessage) for (const e of arrived) this.onClientMessage(e);
 
     // 2. replies and resolutions made here, back to the link
     let pushed = false;

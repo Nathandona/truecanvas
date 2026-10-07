@@ -40,9 +40,28 @@ export function dlx(pm: Pm, pkg: string, args: string[]): [string, string[]] {
   return ["npx", ["--yes", pkg, ...args]];
 }
 
-/** PATH with this Node first, so `npx` and friends match the running Node. */
+/*
+ * The Node that runs projects and tools. It's this process's own, unless a
+ * host sets another: the desktop app runs on Electron, whose binary isn't a
+ * Node the user's apps should run on, so it passes the user's own Node and
+ * the PATH of their login shell.
+ */
+let runtime: { node: string | null; env: NodeJS.ProcessEnv } | null = null;
+
+export function useNodeRuntime(node: string | null, env: NodeJS.ProcessEnv) {
+  runtime = { node, env };
+}
+
+/** The Node binary to run projects with, or null when the user has none. */
+export function nodeBin(): string | null {
+  return runtime ? runtime.node : process.execPath;
+}
+
+/** PATH with that Node first, so `npx` and friends match it. */
 export function toolEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`, ...extra };
+  const base = runtime?.env ?? process.env;
+  const node = nodeBin();
+  return { ...base, PATH: node ? `${path.dirname(node)}${path.delimiter}${base.PATH ?? ""}` : (base.PATH ?? ""), ...extra };
 }
 
 /**

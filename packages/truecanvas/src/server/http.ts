@@ -52,7 +52,15 @@ export async function startServer(ws: Workspace) {
   let prCache: { key: string; at: number; pr: PullRequest | null } | null = null;
   const thumbs = new Thumbnails(ws, shots);
   // client comments on share links, both ways
-  const commentSync = new CommentSync(ws);
+  // the Truecanvas window (hub) that started this project hears about them, to notify the studio
+  const hub = process.env.TRUECANVAS_HUB_URL;
+  const commentSync = new CommentSync(
+    ws,
+    hub
+      ? (e) =>
+          void fetch(`${hub}/api/hub/notify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: config.root, ...e }), signal: AbortSignal.timeout(5000) }).catch(() => {})
+      : undefined,
+  );
   commentSync.start();
   // keep the preview registry in sync with the component catalog
   const syncRegistry = () =>
