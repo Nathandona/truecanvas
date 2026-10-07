@@ -116,6 +116,8 @@ The **Truecanvas window** (`npx truecanvas open`) manages several projects in ta
 
 Add `--live <dir|url>` (or `live` in `share_canvas`) and clients also get **View live** on each frame: the real site at that frame's width, animations and interactions included. Pass a static build (Next `out/`, Vite `dist/`) for the review site to host, or the URL where the app already runs.
 
+On the Cloudflare review site with sign-in, `--invite client@company.com` emails your client an invitation: they sign in with a link, no password, and comment under their name. New links are for invited people and your studio; `--access password|public` changes that, and `--link-only` invites or changes access without a new version.
+
 You deploy the review site once, on your own domain:
 
 - **Cloudflare** (`packages/review-worker`, recommended): Workers, D1 and R2 on the free plan, hosts live sites. See its [README](packages/review-worker/README.md).

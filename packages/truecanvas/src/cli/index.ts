@@ -15,7 +15,7 @@ import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.j
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
-import { connectReviewSite, deleteShare, reviewSite, updateShare, type LiveSite } from "../share/publish.js";
+import { ACCESS_MODES, connectReviewSite, deleteShare, parseEmails, reviewSite, updateAccess, updateShare, type Access, type Invited, type LiveSite } from "../share/publish.js";
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 
@@ -36,6 +36,9 @@ Usage
   truecanvas share [canvas]  Share a canvas as a link for clients (needs truecanvas running).
                        --password <p>, --no-password, --revoke, --restore, --delete, --title <t>, --local (preview only),
                        --live <url|dir>: a live version clients open with "View live" (where the app runs, or a static build)
+                       --invite <emails>: invite people by email (they sign in with a link; new links are invited-only)
+                       --access invited|password|public: who can open the link
+                       --link-only: with --invite or --access, change the link without a new version
   truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
@@ -61,6 +64,15 @@ const c = {
   red: paint("31", "39"),
 };
 
+const accessLabel = (access: Access | null) => (access === "invited" ? "invited people only" : access === "password" ? "password protected" : access === "public" ? "anyone with the link" : "");
+
+function printInvited(invited: Invited[]) {
+  for (const i of invited) {
+    if (i.error) console.log(`  ${c.yellow("!")} Couldn't email ${i.email}: ${i.error}`);
+    else console.log(`  ${c.green("✓")} Invited ${i.email}${i.link ? c.dim(` (local review site: ${i.link})`) : ""}`);
+  }
+}
+
 async function main() {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
@@ -85,6 +97,9 @@ async function main() {
       delete: { type: "boolean" },
       token: { type: "string" },
       live: { type: "string" },
+      invite: { type: "string", multiple: true },
+      access: { type: "string" },
+      "link-only": { type: "boolean" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -241,6 +256,35 @@ async function main() {
       console.log(`  ${c.green("✓")} ${values.revoke ? "Link revoked" : values.restore ? "Link restored" : "Password removed"}: ${url}`);
       return;
     }
+    // who can open the link, and who to invite
+    let invite: string[] = [];
+    try {
+      invite = parseEmails(values.invite);
+    } catch (err) {
+      console.error(`  ${c.red("✗")} ${(err as Error).message}`);
+      process.exit(1);
+    }
+    const access = values.access as Access | undefined;
+    if (access && !ACCESS_MODES.includes(access)) {
+      console.error(`  ${c.red("✗")} --access is ${ACCESS_MODES.join(", ")}`);
+      process.exit(1);
+    }
+    if (values["link-only"]) {
+      const site = reviewSite();
+      if (!site || !canvas || (!access && !invite.length)) {
+        console.error(!site ? `No review site yet: ${c.accent("npx truecanvas share setup")}` : !canvas ? "Name the canvas: truecanvas share <canvas> --invite name@client.com --link-only" : "--link-only goes with --invite or --access");
+        process.exit(1);
+      }
+      try {
+        const done = await updateAccess(site, path.basename(root), canvas, { access, password: values.password, invite });
+        console.log(`  ${c.green("✓")} ${done.url} ${c.dim(`(${accessLabel(done.access)})`)}`);
+        printInvited(done.invited);
+      } catch (err) {
+        console.error(`  ${c.red("✗")} ${(err as Error).message}`);
+        process.exit(1);
+      }
+      return;
+    }
     if (!state) {
       console.error(`Truecanvas isn't running for this project. Start it first: ${c.accent("npx truecanvas")}`);
       process.exit(1);
@@ -258,12 +302,21 @@ async function main() {
       console.error(`  ${c.red("✗")} No index.html in ${live.dir}. Pass a static build folder (Next \`out/\`, Vite \`dist/\`) or the URL where the app runs.`);
       process.exit(1);
     }
-    if (live && !publish) {
-      console.error(`  ${c.red("✗")} --live needs a review site: ${c.accent("npx truecanvas share setup")}`);
+    if ((live || access || invite.length) && !publish) {
+      console.error(`  ${c.red("✗")} ${live ? "--live" : access ? "--access" : "--invite"} needs a review site: ${c.accent("npx truecanvas share setup")}`);
       process.exit(1);
     }
-    const res = await fetch(`${base}/api/share/snapshot`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ canvas, local: !publish, title: values.title, password, live }) });
-    const body = (await res.json()) as { error?: string; preview: string; manifest: { frames: unknown[]; missing: string[]; external: string[] }; published: { url: string; versions: number; skipped: string[]; password: boolean; live: string | null } | null };
+    const res = await fetch(`${base}/api/share/snapshot`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ canvas, local: !publish, title: values.title, password, live, access, invite }),
+    });
+    const body = (await res.json()) as {
+      error?: string;
+      preview: string;
+      manifest: { frames: unknown[]; missing: string[]; external: string[] };
+      published: { url: string; versions: number; skipped: string[]; password: boolean; live: string | null; access: Access | null; invited: Invited[] } | null;
+    };
     if (!res.ok) {
       console.error(`  ${c.red("✗")} ${body.error}`);
       process.exit(1);
@@ -274,8 +327,11 @@ async function main() {
     if (manifest.missing.length) console.log(`  ${c.yellow("!")} ${manifest.missing.length} asset${manifest.missing.length === 1 ? "" : "s"} couldn't be fetched.`);
     if (published?.skipped.length) console.log(`  ${c.yellow("!")} Left out (over 4.4 MB): ${published.skipped.join(", ")}`);
     if (published) {
-      console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${published.password ? ", password protected" : ""})`)}`);
-      if (published.live) console.log(`  ${c.green("✓")} Live: ${published.live} ${c.dim(published.password ? "(opens from the link's View live button)" : "")}`);
+      const who = published.access ? `, ${accessLabel(published.access)}` : published.password ? ", password protected" : "";
+      console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${who})`)}`);
+      if (published.live) console.log(`  ${c.green("✓")} Live: ${published.live} ${c.dim(published.access !== "public" && (published.access || published.password) ? "(opens from the link's View live button)" : "")}`);
+      printInvited(published.invited);
+      if (published.access === "invited" && !published.invited.length) console.log(`  ${c.dim("Only invited people and your studio can open it. Invite someone:")} ${c.accent(`npx truecanvas share ${canvas} --invite name@client.com --link-only`)}`);
       console.log("");
       if (values.open && !values["no-open"]) openBrowser(published.url);
     } else {

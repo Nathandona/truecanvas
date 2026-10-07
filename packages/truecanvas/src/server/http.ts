@@ -24,7 +24,7 @@ import { addShadcnComponents, installIconLibrary, libraryState, shadcnRegistry }
 import { loadIcons, searchIcons } from "../core/icons.js";
 import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
-import { publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
+import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
 import { CommentSync } from "../share/sync.js";
 import { assertCanvasName } from "../core/scaffold.js";
 
@@ -422,16 +422,27 @@ export async function startServer(ws: Workspace) {
       }
       case "GET /api/share/status": {
         const site = reviewSite();
-        return json(res, 200, { site: site ? site.url : null });
+        // what the site can do (invitations need sign-in): offline or an older site, nothing extra
+        const features = site ? await siteFeatures(site).catch(() => []) : [];
+        return json(res, 200, { site: site ? site.url : null, features });
       }
       case "POST /api/share/snapshot": {
         // local: a preview only. Otherwise published to the studio's review site when one is set up.
-        const { canvas, frames, local, title, password, live } = (await readJson(req)) as { canvas: string; frames?: string[]; local?: boolean; title?: string; password?: string | null; live?: LiveSite };
+        const { canvas, frames, local, title, password, live, access, invite } = (await readJson(req)) as {
+          canvas: string;
+          frames?: string[];
+          local?: boolean;
+          title?: string;
+          password?: string | null;
+          live?: LiveSite;
+          access?: Access;
+          invite?: string[];
+        };
         assertCanvasName(canvas);
         const { dir, manifest } = await createSnapshot(ws, shots, canvas, { frames });
         const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
         const site = local ? null : reviewSite();
-        const published = site ? await publishSnapshot(site, dir, manifest, { title, password, live }) : null;
+        const published = site ? await publishSnapshot(site, dir, manifest, { title, password, live, access, invite: invite?.length ? parseEmails(invite) : undefined }) : null;
         if (published) commentSync.forget(canvas);
         return json(res, 200, { manifest, preview, published });
       }

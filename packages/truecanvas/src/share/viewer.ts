@@ -50,6 +50,10 @@ header { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; ali
   background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(0,0,0,.05); }
 .brand img { height: 20px; width: auto; display: block; }
 .brand span { font-weight: 600; letter-spacing: -.01em; }
+.brand .who { font-weight: 450; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.brand form { display: contents; }
+.brand .who-btn, .brand a.who-btn { height: 28px; padding: 0 8px; border-radius: 8px; font-size: 13px; color: var(--text); text-decoration: none; display: inline-flex; align-items: center; }
+.brand .who-btn:hover { background: var(--line); }
 .title { font-weight: 550; }
 .meta { color: var(--muted); }
 .vselect { gap: 4px; color: var(--muted); padding: 0 6px 0 8px; margin-right: -6px; max-width: 46vw; }
@@ -130,6 +134,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 @media (max-width: 640px) {
   .meta, .sep, .made, .vdate { display: none; } header { top: 8px; left: 8px; right: 8px; gap: 8px; }
   .brand:has(img) span { display: none; }
+  .brand .who { display: none; }
   header .pill { min-width: 0; padding: 0 10px; }
   header .pill:last-child { flex: 1 1 auto; justify-content: flex-end; }
   .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -276,6 +281,14 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   }
   if (manifest.brand) {
     document.getElementById("brand").innerHTML = (manifest.brand.logo ? '<img alt="" src="' + esc(manifest.brand.logo) + '">' : "") + (manifest.brand.name ? "<span>" + esc(manifest.brand.name) + "</span>" : "");
+  }
+  // signed in: who's commenting, and sign out. On review sites with sign-in, a way in for the studio and invitees.
+  if (manifest.viewer || manifest.signIn) {
+    const brandEl = document.getElementById("brand");
+    const here = location.pathname.replace(/\\/+$/, "");
+    brandEl.insertAdjacentHTML("beforeend", '<span class="sep"></span>' + (manifest.viewer
+      ? '<span class="who" title="' + esc(manifest.viewer.email) + '">' + esc(manifest.viewer.name) + '</span><form method="post" action="/signout"><input type="hidden" name="next" value="' + esc(here) + '"><button class="who-btn" type="submit">Sign out</button></form>'
+      : '<a class="who-btn" href="/signin?next=' + encodeURIComponent(here) + '">Sign in</a>'));
   }
 
   // layout: frames at their canvas positions
@@ -477,7 +490,8 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   var popAnchor = null;
   var pop = document.getElementById("pop");
   const studioName = (manifest.brand && manifest.brand.name) || "Studio";
-  const storedName = () => { try { return localStorage.getItem("tc-review-name") || ""; } catch { return ""; } };
+  // signed in: comments carry the account's name, nothing to type
+  const storedName = () => { if (manifest.viewer) return manifest.viewer.name; try { return localStorage.getItem("tc-review-name") || ""; } catch { return ""; } };
   const saveName = (n) => { try { localStorage.setItem("tc-review-name", n); } catch {} };
   const ago = (t) => {
     const s = Math.round((Date.now() - t) / 1000);

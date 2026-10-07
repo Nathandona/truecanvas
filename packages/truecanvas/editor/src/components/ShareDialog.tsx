@@ -1,14 +1,30 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, LoaderCircle, Lock } from "lucide-react";
-import { api, type ShareResult } from "../lib/api";
+import { Check, Copy, ExternalLink, LoaderCircle, Lock, Mail, Users } from "lucide-react";
+import { api, type ShareAccess, type ShareResult } from "../lib/api";
 import { useStore } from "../lib/store";
+import { Select } from "./controls";
 import { Dialog } from "./Dialog";
 
 /*
  * Share: the canvas's frames rendered by the app, frozen (no scripts, no API
  * calls) and published to the studio's review site as the next version of
  * this canvas's link. Clients open it in a browser, nothing to install.
+ * On review sites with sign-in, the link is for invited people: each gets an
+ * email that signs them in.
  */
+
+const ACCESS_OPTIONS = [
+  { value: "", label: "Keep the link's access" },
+  { value: "invited", label: "Invited people" },
+  { value: "password", label: "Anyone with the password" },
+  { value: "public", label: "Anyone with the link" },
+];
+
+const ACCESS_NOTE: Record<ShareAccess, string> = {
+  invited: "Only invited people and your studio can open it.",
+  password: "Password protected",
+  public: "Anyone with the link can open it.",
+};
 
 export function openShare() {
   useStore.setState({ shareDialog: true });
@@ -23,10 +39,15 @@ export function ShareDialog() {
 
 function Share({ canvas }: { canvas: string }) {
   const [site, setSite] = useState<string | null | undefined>(undefined);
+  // the review site has sign-in: invitations and access modes
+  const [signIn, setSignIn] = useState(false);
   // empty: the link keeps its title (the page name for a new link)
   const [title, setTitle] = useState("");
   const [protect, setProtect] = useState(false);
   const [password, setPassword] = useState("");
+  // empty: the link keeps its access (new links: invited people)
+  const [access, setAccess] = useState<ShareAccess | "">("");
+  const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShareResult | null>(null);
   const [copied, setCopied] = useState(false);
@@ -35,14 +56,32 @@ function Share({ canvas }: { canvas: string }) {
   useEffect(() => {
     api
       .shareStatus()
-      .then((s) => setSite(s.site))
+      .then((s) => {
+        setSite(s.site);
+        setSignIn(s.features?.includes("invites") ?? false);
+      })
       .catch(() => setSite(null));
   }, []);
+
+  const needsPassword = signIn ? access === "password" : protect;
+  const emails = invite
+    .split(/[\s,;]+/)
+    .map((e) => e.trim())
+    .filter(Boolean);
 
   const share = async (local = false) => {
     setBusy(true);
     try {
-      setResult(await api.share({ canvas, local, ...(title.trim() ? { title: title.trim() } : {}), ...(protect && password ? { password } : {}) }));
+      setResult(
+        await api.share({
+          canvas,
+          local,
+          ...(title.trim() ? { title: title.trim() } : {}),
+          ...(needsPassword && password ? { password } : {}),
+          ...(!local && signIn && access ? { access } : {}),
+          ...(!local && signIn && emails.length ? { invite: emails } : {}),
+        }),
+      );
     } catch (err) {
       useStore.getState().toast((err as Error).message);
     } finally {
@@ -87,10 +126,27 @@ function Share({ canvas }: { canvas: string }) {
             <ExternalLink size={13} />
           </a>
         </div>
-        {result.published?.password && (
+        {result.published?.access ? (
           <p className="faint share-note">
-            <Lock size={11} /> Password protected
+            {result.published.access === "invited" ? <Users size={11} /> : result.published.access === "password" ? <Lock size={11} /> : null} {ACCESS_NOTE[result.published.access]}
           </p>
+        ) : (
+          result.published?.password && (
+            <p className="faint share-note">
+              <Lock size={11} /> Password protected
+            </p>
+          )
+        )}
+        {result.published?.invited.map((i) =>
+          i.error ? (
+            <p key={i.email} className="share-warn">
+              Couldn't email {i.email}: {i.error}
+            </p>
+          ) : (
+            <p key={i.email} className="faint share-note">
+              <Mail size={11} /> Invited {i.email}
+            </p>
+          ),
         )}
         {m.external.length > 0 && <p className="share-warn">While rendering, the app called {m.external.join(", ")}. Whatever it showed is in the snapshot: use sample data for clients.</p>}
         {m.missing.length > 0 && <p className="share-warn">{m.missing.length} image or font file{m.missing.length === 1 ? "" : "s"} couldn't be fetched.</p>}
@@ -136,10 +192,23 @@ function Share({ canvas }: { canvas: string }) {
           <div className="field">
             <input id="share-title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`Keep the link's title (new links: ${canvas})`} />
           </div>
-          <label className="share-check">
-            <input type="checkbox" checked={protect} onChange={(e) => setProtect(e.target.checked)} /> Require a password
-          </label>
-          {protect && (
+          {signIn ? (
+            <>
+              <label className="share-label" htmlFor="share-invite">
+                Invite by email <span className="faint">(optional)</span>
+              </label>
+              <div className="field">
+                <input id="share-invite" value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="client@company.com, another@company.com" autoComplete="off" />
+              </div>
+              <span className="share-label">Who can open it</span>
+              <Select value={access} options={ACCESS_OPTIONS} onChange={(v) => setAccess(v as ShareAccess | "")} ariaLabel="Who can open it" />
+            </>
+          ) : (
+            <label className="share-check">
+              <input type="checkbox" checked={protect} onChange={(e) => setProtect(e.target.checked)} /> Require a password
+            </label>
+          )}
+          {needsPassword && (
             <div className="field">
               <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password to give your client" aria-label="Password" autoComplete="off" />
             </div>
@@ -148,7 +217,7 @@ function Share({ canvas }: { canvas: string }) {
             <button className="btn" onClick={() => void share(true)}>
               Preview locally
             </button>
-            <button className="btn primary" disabled={protect && !password} onClick={() => void share()}>
+            <button className="btn primary" disabled={needsPassword && !password} onClick={() => void share()}>
               Share link
             </button>
           </div>

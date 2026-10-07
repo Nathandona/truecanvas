@@ -11,7 +11,7 @@ import { readDesignTokens } from "../core/tokens.js";
 import { DEVICES, findDevice } from "../core/devices.js";
 import type { Screenshotter } from "./screenshot.js";
 import { createSnapshot } from "../share/snapshot.js";
-import { publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
+import { parseEmails, publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
 A canvas is a .tsx file (canvas/<name>.canvas.tsx) with <Frame> artboards; every edit you make is written to that file as clean TSX and appears live in the user's editor window.
@@ -688,9 +688,18 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
           .string()
           .optional()
           .describe("A live version clients open with \"View live\": the https URL where the app runs, or a static build folder (Next `out/`, Vite `dist/`, relative to the project) that the review site hosts."),
+        invite: z
+          .array(z.string())
+          .optional()
+          .describe("Emails of people to invite (the client). Each gets an email with a link that signs them in and opens the design. Only invite addresses the user gave you."),
+        access: z
+          .enum(["invited", "password", "public"])
+          .optional()
+          .describe("Who can open the link: invited people (the default for new links on review sites with sign-in), a password (the user gives it to you), or anyone with the link. Existing links keep theirs unless this is set."),
+        password: z.string().optional().describe("The link's password, with access \"password\"."),
       },
     },
-    async ({ canvas, frames, title, live }) => {
+    async ({ canvas, frames, title, live, invite, access, password }) => {
       try {
         const c = resolveCanvas(canvas);
         presence(c, "looking", "Preparing a share link");
@@ -703,12 +712,16 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         const site = reviewSite();
         if (!site) return text([`✓ Snapshot ready (${manifest.frames.length} frames). No review site is set up, so this is a local preview: ${preview}`, "To get client links, the user runs `npx truecanvas share setup`.", ...notes].join("\n"));
         const liveSite: LiveSite | undefined = live ? (/^https?:\/\//.test(live) ? { url: live } : { dir: path.resolve(ws.config.root, live) }) : undefined;
-        const published = await publishSnapshot(site, dir, manifest, { title, live: liveSite });
+        const published = await publishSnapshot(site, dir, manifest, { title, live: liveSite, access, password, invite: invite?.length ? parseEmails(invite) : undefined });
+        const who =
+          published.access === "invited" ? ", invited people only" : published.access === "public" ? ", anyone with the link" : published.password ? ", password protected" : "";
         return text(
           [
             `✓ Shared ${manifest.frames.length} frame(s): ${published.url}`,
-            `Version ${published.versions} of this link${published.password ? ", password protected" : ""}.`,
+            `Version ${published.versions} of this link${who}.`,
             published.live ? `Live version: ${published.live}` : "",
+            ...published.invited.map((i) => (i.error ? `Couldn't email ${i.email}: ${i.error}` : `Invited ${i.email} (emailed a sign-in link).`)),
+            published.access === "invited" && !published.invited.length ? "Only invited people and the studio can open it: share again with `invite` to invite the client." : "",
             ...notes,
           ]
             .filter(Boolean)

@@ -49,7 +49,35 @@ export interface Published {
   password: boolean;
   /** the version's live site, when it has one */
   live: string | null;
+  /** who can open the link, on review sites with sign-in (null on older ones) */
+  access: Access | null;
+  /** people invited with this share, each emailed their invitation */
+  invited: Invited[];
 }
+
+/**
+ * Who can open a link: people invited by email (they sign in with a link),
+ * anyone with the password, or anyone with the link. Review sites with
+ * sign-in only; links made before keep a password or stay open.
+ */
+export type Access = "invited" | "password" | "public";
+export const ACCESS_MODES: Access[] = ["invited", "password", "public"];
+
+export interface Invited {
+  email: string;
+  /** the invitation's link, returned by review sites in local development only */
+  link?: string;
+  /** the email couldn't be sent */
+  error?: string;
+}
+
+/** What the review site can do beyond the original API. */
+export async function siteFeatures(site: ReviewSite): Promise<string[]> {
+  const res = (await request(site, "GET", "/api/shares")) as { features?: string[] };
+  return res.features ?? [];
+}
+
+const NO_SIGN_IN = "This review site doesn't have sign-in yet. Update it (packages/review-worker) and set BETTER_AUTH_SECRET, STUDIO_EMAILS and STUDIO_EMAIL_FROM to invite people by email.";
 
 /**
  * A live version of the design, opened from the link's "View live" button:
@@ -61,12 +89,25 @@ export type LiveSite = { url: string } | { dir: string };
 /** Vercel functions take request bodies up to 4.5 MB. */
 const MAX_FILE = 4.4 * 1024 * 1024;
 
-export async function publishSnapshot(site: ReviewSite, dir: string, manifest: ShareManifest, opts: { title?: string; password?: string | null; live?: LiveSite } = {}): Promise<Published> {
-  // before uploading anything: can this review site take a live site?
+export interface ShareOptions {
+  title?: string;
+  password?: string | null;
+  live?: LiveSite;
+  /** who can open the link; a new link defaults to invited people on sites with sign-in */
+  access?: Access;
+  /** emails to invite (each gets an email with their sign-in link) */
+  invite?: string[];
+}
+
+export async function publishSnapshot(site: ReviewSite, dir: string, manifest: ShareManifest, opts: ShareOptions = {}): Promise<Published> {
+  // before uploading anything: can this review site do what's asked?
+  const can = await siteFeatures(site);
+  const signIn = can.includes("access") && can.includes("invites");
+  if ((opts.access || opts.invite?.length) && !signIn) throw new Error(NO_SIGN_IN);
+  if (opts.access === "password" && !opts.password) throw new Error("Pass the password to protect the link with: --password <p>");
   if (opts.live) {
-    const { features = [] } = (await request(site, "GET", "/api/shares")) as { features?: string[] };
     const needed = "url" in opts.live ? "live-url" : "live-files";
-    if (!features.includes(needed))
+    if (!can.includes(needed))
       throw new Error(
         "url" in opts.live
           ? "This review site doesn't support live sites yet. Update it (packages/review-worker) to share a live URL."
@@ -74,7 +115,14 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
       );
     if ("dir" in opts.live && !fs.statSync(opts.live.dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`No build folder at ${opts.live.dir}`);
   }
-  const share = (await request(site, "POST", "/api/shares", { project: manifest.project, canvas: manifest.canvas, title: opts.title ?? manifest.canvas })) as { slug: string; password: boolean };
+  // a new link: invited people only, unless a password or another mode is asked for (existing links keep theirs)
+  const firstAccess = signIn ? (opts.access ?? (opts.password ? "password" : "invited")) : undefined;
+  const share = (await request(site, "POST", "/api/shares", {
+    project: manifest.project,
+    canvas: manifest.canvas,
+    title: opts.title ?? manifest.canvas,
+    ...(firstAccess ? { access: firstAccess === "invited" ? "invited" : "public" } : {}),
+  })) as { slug: string; password: boolean; access?: Access };
   const base = `/api/shares/${share.slug}`;
   const known = new Set(((await request(site, "GET", `${base}/assets`)) as { assets: string[] }).assets);
 
@@ -118,11 +166,56 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
     await Promise.all(Array.from({ length: 6 }, liveWorker));
   }
 
-  const change = { ...(opts.password !== undefined ? { password: opts.password } : {}), ...(opts.title ? { title: opts.title } : {}) };
-  if (Object.keys(change).length) await request(site, "PATCH", base, change);
+  const change = {
+    ...(opts.password !== undefined ? { password: opts.password } : {}),
+    ...(opts.title ? { title: opts.title } : {}),
+    ...(opts.access ? { access: opts.access } : {}),
+  };
+  let password = share.password;
+  let access = share.access ?? null;
+  if (Object.keys(change).length) {
+    const after = (await request(site, "PATCH", base, change)) as { password: boolean; access?: Access };
+    password = after.password;
+    access = after.access ?? access;
+  }
   const live = opts.live ? ("url" in opts.live ? { url: opts.live.url } : { files: true }) : undefined;
   const done = (await request(site, "POST", `${base}/versions`, { id: manifest.id, createdAt: manifest.createdAt, frames: manifest.frames, live })) as { url: string; versions: number; live?: string | null };
-  return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password: opts.password === undefined ? share.password : !!opts.password, live: done.live ?? null };
+  // invitations go out once there's something to open
+  const invited = opts.invite?.length ? await inviteTo(site, share.slug, opts.invite) : [];
+  return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password, live: done.live ?? null, access, invited };
+}
+
+async function inviteTo(site: ReviewSite, slug: string, emails: string[]): Promise<Invited[]> {
+  const res = (await request(site, "POST", `/api/shares/${slug}/invites`, { emails })) as { invited: Invited[] };
+  return res.invited;
+}
+
+/** Splits "a@x.com, b@y.com" (or repeated values) into clean emails. */
+export function parseEmails(values: string | string[] | undefined): string[] {
+  const all = (Array.isArray(values) ? values : values ? [values] : []).flatMap((v) => v.split(/[\s,;]+/));
+  const emails = [...new Set(all.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const bad = emails.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if (bad.length) throw new Error(`Not an email: ${bad.join(", ")}`);
+  return emails;
+}
+
+/**
+ * Changes a canvas's link without a new version: who can open it, and
+ * invitations (each invitee is emailed).
+ */
+export async function updateAccess(site: ReviewSite, project: string, canvas: string, change: { access?: Access; password?: string; invite?: string[] }) {
+  const can = await siteFeatures(site);
+  if (!can.includes("access") || !can.includes("invites")) throw new Error(NO_SIGN_IN);
+  const found = (await request(site, "GET", `/api/shares?project=${encodeURIComponent(project)}&canvas=${encodeURIComponent(canvas)}`)) as { slug: string | null };
+  if (!found.slug) throw new Error(`${canvas} has no link yet. Share it first: npx truecanvas share ${canvas}`);
+  let access: Access | null = null;
+  if (change.access || change.password) {
+    const after = (await request(site, "PATCH", `/api/shares/${found.slug}`, { ...(change.access ? { access: change.access } : {}), ...(change.password ? { password: change.password } : {}) })) as { access?: Access };
+    access = after.access ?? null;
+  }
+  const invited = change.invite?.length ? await inviteTo(site, found.slug, change.invite) : [];
+  const share = (await request(site, "GET", `/api/shares/${found.slug}`)) as { access?: Access };
+  return { url: `${site.url}/s/${found.slug}`, access: access ?? share.access ?? null, invited };
 }
 
 /** Deletes a canvas's link with its versions, files and comments. */
@@ -133,7 +226,7 @@ export async function deleteShare(site: ReviewSite, project: string, canvas: str
   return true;
 }
 
-/** Revokes or restores a canvas's link, or changes its password. */
+/** Revokes or restores a canvas's link, or removes its password. */
 export async function updateShare(site: ReviewSite, project: string, canvas: string, change: { revoked?: boolean; password?: string | null }) {
   const share = (await request(site, "POST", "/api/shares", { project, canvas })) as { slug: string; url: string };
   await request(site, "PATCH", `/api/shares/${share.slug}`, change);
