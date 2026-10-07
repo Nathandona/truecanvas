@@ -238,7 +238,8 @@ export interface GitCommit {
 
 export interface CommentAuthor {
   name: string;
-  kind: "user" | "agent";
+  /** client: from a share link */
+  kind: "user" | "agent" | "client";
 }
 
 export interface CommentThread {
@@ -251,6 +252,8 @@ export interface CommentThread {
   resolvedBy?: CommentAuthor;
   messages: { id: string; author: CommentAuthor; text: string; at: number }[];
   createdAt: number;
+  /** a client's thread on a share link: replies go back to the client */
+  share?: { link: string; version: string };
 }
 
 export interface FrameReview {

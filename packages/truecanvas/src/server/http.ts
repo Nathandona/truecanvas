@@ -25,6 +25,7 @@ import { loadIcons, searchIcons } from "../core/icons.js";
 import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
 import { publishSnapshot, reviewSite } from "../share/publish.js";
+import { CommentSync } from "../share/sync.js";
 import { assertCanvasName } from "../core/scaffold.js";
 
 const MIME: Record<string, string> = {
@@ -50,6 +51,9 @@ export async function startServer(ws: Workspace) {
   const shots = new Screenshotter(config.appUrl);
   let prCache: { key: string; at: number; pr: PullRequest | null } | null = null;
   const thumbs = new Thumbnails(ws, shots);
+  // client comments on share links, both ways
+  const commentSync = new CommentSync(ws);
+  commentSync.start();
   // keep the preview registry in sync with the component catalog
   const syncRegistry = () =>
     ws.catalog
@@ -428,6 +432,7 @@ export async function startServer(ws: Workspace) {
         const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
         const site = local ? null : reviewSite();
         const published = site ? await publishSnapshot(site, dir, manifest, { title, password }) : null;
+        if (published) commentSync.forget(canvas);
         return json(res, 200, { manifest, preview, published });
       }
       case "POST /api/source": {
@@ -577,6 +582,7 @@ export async function startServer(ws: Workspace) {
   });
 
   const shutdown = async () => {
+    commentSync.stop();
     await shots.close();
     for (const t of transports.values()) await t.close().catch(() => {});
     server.close();

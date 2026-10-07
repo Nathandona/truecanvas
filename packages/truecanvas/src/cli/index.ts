@@ -15,7 +15,7 @@ import { installDesktop, launcherPath, uninstallDesktop } from "../hub/desktop.j
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { doctor } from "./doctor.js";
-import { connectReviewSite, reviewSite, updateShare } from "../share/publish.js";
+import { connectReviewSite, deleteShare, reviewSite, updateShare } from "../share/publish.js";
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 
@@ -34,7 +34,7 @@ Usage
   truecanvas quit      Quit the window and every app it started
   truecanvas desktop   Add Truecanvas to your app launcher (Linux); "desktop remove" undoes it
   truecanvas share [canvas]  Share a canvas as a link for clients (needs truecanvas running).
-                       --password <p>, --no-password, --revoke, --restore, --title <t>, --local (preview only)
+                       --password <p>, --no-password, --revoke, --restore, --delete, --title <t>, --local (preview only)
   truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
@@ -81,6 +81,7 @@ async function main() {
       "no-password": { type: "boolean" },
       revoke: { type: "boolean" },
       restore: { type: "boolean" },
+      delete: { type: "boolean" },
       token: { type: "string" },
     },
   });
@@ -216,6 +217,16 @@ async function main() {
     const state = await fetch(`${base}/api/state`).then((r) => (r.ok ? (r.json() as Promise<{ canvases: string[] }>) : null)).catch(() => null);
     const canvas = positionals[1] ?? (state?.canvases.length === 1 ? state.canvases[0] : null);
     // revoke / restore / password: only the review site is involved
+    if (values.delete) {
+      const site = reviewSite();
+      if (!site || !canvas) {
+        console.error(site ? "Name the canvas: truecanvas share <canvas> --delete" : `No review site yet: ${c.accent("npx truecanvas share setup")}`);
+        process.exit(1);
+      }
+      const done = await deleteShare(site, path.basename(root), canvas);
+      console.log(done ? `  ${c.green("✓")} Deleted the link of ${canvas}, with its versions and comments.` : `  ${canvas} has no link.`);
+      return;
+    }
     // link changes only: never a new version
     if (values.revoke || values.restore || values["no-password"]) {
       const site = reviewSite();

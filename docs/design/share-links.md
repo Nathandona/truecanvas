@@ -1,6 +1,6 @@
 # Share links: technical design
 
-Status: milestones 1 and 2 built (2026-10-07), live at review.altair-studio.com. Comments are next. First user: Altair studio, sharing designs with clients on the studio's own domain.
+Status: milestones 1 to 3 built (2026-10-07), live at review.altair-studio.com. First user: Altair studio, sharing designs with clients on the studio's own domain.
 
 ## Goal
 

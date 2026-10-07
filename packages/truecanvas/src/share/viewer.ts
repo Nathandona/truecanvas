@@ -18,14 +18,16 @@ export function viewerHtml(): string {
 :root {
   --bg: #f3f2ef; --dot: rgba(0,0,0,.07); --panel: rgba(255,255,255,.86); --line: rgba(0,0,0,.08);
   --text: #1c1b19; --muted: #77756f; --frame-shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 40px -12px rgba(0,0,0,.18);
-  --ease-out: cubic-bezier(.23,1,.32,1);
+  --ease-out: cubic-bezier(.23,1,.32,1); --panel-solid: #fff; --field: #f3f2ef; --accent: #ea6a3c; --accent-soft: rgba(234,106,60,.12);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #151514; --dot: rgba(255,255,255,.06); --panel: rgba(30,30,28,.86); --line: rgba(255,255,255,.09);
-    --text: #ecebe8; --muted: #9a9892; --frame-shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 48px -12px rgba(0,0,0,.6); color-scheme: dark; }
+    --text: #ecebe8; --muted: #9a9892; --frame-shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 48px -12px rgba(0,0,0,.6); color-scheme: dark;
+    --panel-solid: #1e1e1c; --field: #2a2a28; --accent-soft: rgba(234,106,60,.2); }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
   font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
 #stage { position: fixed; inset: 0; cursor: grab; touch-action: none;
@@ -47,8 +49,17 @@ header { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; ali
 .brand span { font-weight: 600; letter-spacing: -.01em; }
 .title { font-weight: 550; }
 .meta { color: var(--muted); }
-select { font: inherit; color: var(--muted); background: transparent; border: 0; padding: 4px 2px; cursor: pointer; max-width: 46vw; }
-select:focus-visible { outline: 2px solid #3b82f6; border-radius: 6px; }
+.vselect { gap: 4px; color: var(--muted); padding: 0 6px 0 8px; margin-right: -6px; max-width: 46vw; }
+.vselect .vlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vselect[aria-expanded="true"] { background: var(--line); color: var(--text); }
+.vlist { position: fixed; z-index: 40; max-height: 320px; overflow: auto; padding: 4px; border-radius: 10px; background: var(--panel-solid);
+  border: 1px solid var(--line); box-shadow: 0 12px 36px -10px rgba(0,0,0,.28); animation: pop-in .12s var(--ease-out); }
+.vopt { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 4px; border-radius: 6px; cursor: default; white-space: nowrap; }
+.vopt.active { background: var(--accent); color: #fff; }
+.vopt .vcheck { width: 18px; display: inline-grid; place-items: center; flex: none; }
+.vopt .vname { flex: 1; font-weight: 500; }
+.vopt .vhint { margin-left: 18px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vopt.active .vhint { color: rgba(255,255,255,.8); }
 .sep { width: 1px; height: 16px; background: var(--line); }
 footer { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); }
 footer .pill { padding: 0 6px; gap: 2px; }
@@ -61,7 +72,67 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 .made { position: fixed; right: 14px; bottom: 18px; color: var(--muted); font-size: 11.5px; text-decoration: none; }
 .made:hover { color: var(--text); }
 #empty { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); }
-@media (max-width: 640px) { .meta, .sep, .made { display: none; } header { top: 8px; left: 8px; right: 8px; } }
+/* comments */
+#stage.commenting { cursor: crosshair; }
+.pin { position: absolute; width: 0; height: 0; transform-origin: 0 0; z-index: 2; }
+.pin button { position: absolute; left: 0; bottom: 0; min-width: 30px; height: 30px; padding: 0 9px; border-radius: 15px 15px 15px 3px;
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 12.5px; box-shadow: 0 0 0 2px #fff, 0 4px 14px -4px rgba(0,0,0,.4);
+  transition: transform .15s var(--ease-out); }
+.pin button:hover { background: var(--accent); transform: scale(1.06); }
+.pin.done button { background: #8b8a85; }
+.pin.on button { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent), 0 6px 18px -4px rgba(0,0,0,.45); }
+.pin.draft button { background: var(--text); }
+#pop { position: fixed; z-index: 20; width: 320px; max-height: min(460px, calc(100dvh - 120px)); display: flex; flex-direction: column;
+  background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px -12px rgba(0,0,0,.35); overflow: hidden;
+  animation: pop-in .16s var(--ease-out); }
+@keyframes pop-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+#pop[hidden], #panel[hidden] { display: none; }
+.pop-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px 14px; border-bottom: 1px solid var(--line); font-weight: 550; }
+.pop-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-msgs { overflow-y: auto; padding: 4px 14px; }
+.msg { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.msg:last-child { border-bottom: 0; }
+.msg-who { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+.msg-who b { font-weight: 600; }
+.msg-who small { color: var(--muted); }
+.badge { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.msg p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.resolved-note { color: var(--muted); font-size: 12px; padding: 8px 14px 0; }
+.compose { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
+.compose input, .compose textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: 9px; padding: 8px 10px; resize: none; width: 100%; }
+.compose input:focus, .compose textarea:focus { outline: none; border-color: var(--accent); }
+.compose-actions { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
+.compose-actions .hint { margin-right: auto; color: var(--muted); font-size: 11.5px; }
+.btn-primary { background: var(--accent); color: #fff; font-weight: 550; padding: 0 12px; }
+.btn-primary:hover { background: var(--accent); filter: brightness(1.06); }
+.btn-primary[disabled] { opacity: .5; pointer-events: none; }
+#comment.on { background: var(--accent); color: #fff; }
+#comment svg, #list svg { display: block; }
+.count { margin-left: 5px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#panel { position: fixed; z-index: 15; top: 62px; right: 12px; bottom: 70px; width: 320px; display: flex; flex-direction: column;
+  background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px -16px rgba(0,0,0,.3); overflow: hidden; }
+.panel-head { display: flex; align-items: center; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--line); font-weight: 600; }
+.panel-head span { flex: 1; }
+.panel-list { overflow-y: auto; flex: 1; }
+.item { all: unset; box-sizing: border-box; display: flex; gap: 10px; width: 100%; padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item:hover { background: var(--line); }
+.item:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.item .num { flex: none; width: 22px; height: 22px; border-radius: 11px 11px 11px 3px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; }
+.item.done .num { background: #8b8a85; }
+.item div { min-width: 0; }
+.item p { margin: 2px 0 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item small { color: var(--muted); }
+.empty-list { padding: 24px 16px; color: var(--muted); text-align: center; }
+.toast { position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%); z-index: 30; padding: 8px 14px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12.5px; }
+@media (max-width: 640px) {
+  .meta, .sep, .made, .vdate { display: none; } header { top: 8px; left: 8px; right: 8px; gap: 8px; }
+  .brand:has(img) span { display: none; }
+  header .pill { min-width: 0; padding: 0 10px; }
+  header .pill:last-child { flex: 1 1 auto; justify-content: flex-end; }
+  .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pop { left: 8px !important; right: 8px; top: auto !important; bottom: 8px; width: auto; max-height: 60dvh; }
+  #panel { left: 8px; right: 8px; top: 56px; bottom: 68px; width: auto; }
+}
 @media (prefers-reduced-motion: reduce) { .frame-box iframe { transition: none; } }
 </style>
 </head>
@@ -69,12 +140,16 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 <div id="stage" aria-label="Design canvas"><div id="world"></div></div>
 <header>
   <div class="pill brand" id="brand"><span>Design review</span></div>
-  <div class="pill"><span class="title" id="title"></span><span class="sep"></span><span class="meta" id="meta"></span></div>
+  <div class="pill"><span class="title" id="title"></span><span class="sep"></span><span class="meta" id="meta"></span><button id="list" hidden aria-label="Comments" title="Comments"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg><span class="count" id="count">0</span></button></div>
 </header>
+<aside id="panel" hidden aria-label="Comments"><div class="panel-head"><span>Comments</span><button id="panel-close" aria-label="Close">✕</button></div><div class="panel-list" id="panel-list"></div></aside>
+<div id="pop" hidden role="dialog" aria-label="Comment"></div>
 <footer><div class="pill">
   <button id="out" aria-label="Zoom out" title="Zoom out (-)">−</button>
   <button id="zoom" aria-label="Zoom to fit" title="Zoom to fit (1)">100%</button>
   <button id="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+  <span class="sep" id="comment-sep" hidden></span>
+  <button id="comment" hidden aria-pressed="false" title="Comment (C)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M12 8v5M9.5 10.5h5"/></svg><span style="margin-left:6px">Comment</span></button>
 </div></footer>
 <a class="made" href="https://truecanvas.dev" target="_blank" rel="noopener">Made with Truecanvas</a>
 <script>
@@ -95,20 +170,88 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   const day = (t) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
   const time = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const meta = document.getElementById("meta");
-  if (manifest.versions && manifest.versions.length > 1) {
-    // versions: the latest by default, earlier ones a pick away
-    const select = document.createElement("select");
-    select.setAttribute("aria-label", "Version");
-    manifest.versions.forEach((v, i) => {
-      const o = document.createElement("option");
-      o.value = v.id;
-      o.textContent = (v.latest ? "Latest · " : "Version " + (manifest.versions.length - i) + " · ") + day(v.createdAt) + " " + time(v.createdAt);
-      o.selected = v.id === manifest.id;
-      select.appendChild(o);
-    });
-    select.onchange = () => { location.search = select.value === manifest.versions[0].id ? "" : "?v=" + select.value; };
-    meta.replaceWith(select);
-  } else meta.textContent = day(manifest.createdAt);
+  if (manifest.versions && manifest.versions.length > 1) versionPicker(meta);
+  else meta.textContent = day(manifest.createdAt);
+
+  /** Versions: the latest by default, earlier ones a pick away. A listbox like the editor's selects. */
+  function versionPicker(slot) {
+    const vs = manifest.versions;
+    const label = (v, i) => (v.latest ? "Latest" : "Version " + (vs.length - i));
+    const currentIndex = Math.max(0, vs.findIndex((v) => v.id === manifest.id));
+    const trigger = document.createElement("button");
+    trigger.className = "vselect";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-label", "Version");
+    trigger.innerHTML = '<span class="vlabel"></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+    trigger.querySelector(".vlabel").textContent = label(vs[currentIndex], currentIndex);
+    const date = document.createElement("span");
+    date.className = "vdate";
+    date.textContent = " · " + day(vs[currentIndex].createdAt);
+    trigger.querySelector(".vlabel").appendChild(date);
+    slot.replaceWith(trigger);
+    let list = null, active = currentIndex;
+    const choose = (i) => {
+      close();
+      if (i === currentIndex) return;
+      location.search = i === 0 ? "" : "?v=" + vs[i].id;
+    };
+    const paint = () => list && list.querySelectorAll(".vopt").forEach((o, i) => o.classList.toggle("active", i === active));
+    const close = (focus) => {
+      if (!list) return;
+      list.remove();
+      list = null;
+      trigger.setAttribute("aria-expanded", "false");
+      removeEventListener("pointerdown", outside, true);
+      if (focus) trigger.focus();
+    };
+    const outside = (e) => { if (list && !list.contains(e.target) && !trigger.contains(e.target)) close(false); };
+    const open = () => {
+      list = document.createElement("div");
+      list.className = "vlist";
+      list.setAttribute("role", "listbox");
+      list.setAttribute("aria-label", "Version");
+      vs.forEach((v, i) => {
+        const o = document.createElement("div");
+        o.className = "vopt";
+        o.setAttribute("role", "option");
+        o.setAttribute("aria-selected", String(i === currentIndex));
+        o.innerHTML = '<span class="vcheck">' + (i === currentIndex ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>' : "") + '</span><span class="vname"></span><span class="vhint"></span>';
+        o.querySelector(".vname").textContent = label(v, i);
+        o.querySelector(".vhint").textContent = day(v.createdAt) + ", " + time(v.createdAt);
+        o.onpointerenter = () => { active = i; paint(); };
+        o.onpointerdown = (e) => e.preventDefault();
+        o.onclick = () => choose(i);
+        list.appendChild(o);
+      });
+      document.body.appendChild(list);
+      const r = trigger.getBoundingClientRect();
+      const h = list.offsetHeight, w = Math.max(list.offsetWidth, r.width);
+      const up = r.bottom + h + 8 > innerHeight && r.top > h;
+      list.style.minWidth = w + "px";
+      list.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + "px";
+      list.style.top = (up ? r.top - h - 4 : r.bottom + 4) + "px";
+      active = currentIndex;
+      paint();
+      trigger.setAttribute("aria-expanded", "true");
+      addEventListener("pointerdown", outside, true);
+    };
+    trigger.onclick = () => (list ? close(true) : open());
+    trigger.onkeydown = (e) => {
+      e.stopPropagation();
+      if (!list) {
+        if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) { e.preventDefault(); open(); }
+        return;
+      }
+      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(vs.length - 1, active + 1); paint(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); paint(); }
+      else if (e.key === "Home") { e.preventDefault(); active = 0; paint(); }
+      else if (e.key === "End") { e.preventDefault(); active = vs.length - 1; paint(); }
+      else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(active); }
+      else if (e.key === "Escape" || e.key === "Tab") close(e.key === "Escape");
+    };
+    addEventListener("resize", () => close(false));
+  }
   if (manifest.brand) {
     document.getElementById("brand").innerHTML = (manifest.brand.logo ? '<img alt="" src="' + esc(manifest.brand.logo) + '">' : "") + (manifest.brand.name ? "<span>" + esc(manifest.brand.name) + "</span>" : "");
   }
@@ -140,6 +283,8 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     zoomLabel.textContent = Math.round(z * 100) + "%";
     // labels keep a readable size at any zoom
     for (const l of labels) l.style.transform = "scale(" + 1 / z + ")";
+    for (const p of world.querySelectorAll(".pin")) p.style.transform = "scale(" + 1 / z + ")";
+    if (typeof placePop === "function") placePop();
   };
   const zoomAt = (nz, cx, cy) => {
     nz = Math.min(MAX, Math.max(MIN, nz));
@@ -181,6 +326,8 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   let pinch = null;
   let moved = false, downAt = null;
   stage.addEventListener("pointerdown", (e) => {
+    // pins are buttons: they take their own clicks
+    if (e.target.closest && e.target.closest(".pin")) return;
     stage.setPointerCapture(e.pointerId);
     moved = false;
     downAt = { x: e.clientX, y: e.clientY };
@@ -224,7 +371,10 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     apply();
   };
   stage.addEventListener("pointerup", (e) => {
-    if (moved) return;
+    if (moved || !downAt) return;
+    downAt = null;
+    // comment mode: a tap on a frame starts a comment there
+    if (commenting) return startComment(e.clientX, e.clientY);
     const now = Date.now();
     if (now - lastTap < 320) { zoomToFrameAt(e.clientX, e.clientY); lastTap = 0; }
     else lastTap = now;
@@ -235,6 +385,9 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   document.getElementById("out").onclick = () => zoomAt(z / 1.25, ...center());
   zoomLabel.onclick = () => (tall() ? fitWidth() : fit());
   addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input, textarea, select")) return;
+    if (e.key === "Escape") { closePop(); setCommenting(false); return; }
+    if ((e.key === "c" || e.key === "C") && canComment && !e.metaKey && !e.ctrlKey) { setCommenting(!commenting); return; }
     if (e.key === "+" || e.key === "=") zoomAt(z * 1.25, ...center());
     else if (e.key === "-") zoomAt(z / 1.25, ...center());
     else if (e.key === "0") zoomAt(1, ...center());
@@ -242,6 +395,265 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     else if (e.key === "2") fitWidth();
   });
   addEventListener("resize", apply);
+
+  // ---------- comments (on a review site: the manifest says so) ----------
+  var canComment = !!manifest.comments;
+  var commenting = false;
+  var threads = [];
+  var openId = null;
+  var draft = null;
+  var popAnchor = null;
+  var pop = document.getElementById("pop");
+  const studioName = (manifest.brand && manifest.brand.name) || "Studio";
+  const storedName = () => { try { return localStorage.getItem("tc-review-name") || ""; } catch { return ""; } };
+  const saveName = (n) => { try { localStorage.setItem("tc-review-name", n); } catch {} };
+  const ago = (t) => {
+    const s = Math.round((Date.now() - t) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 86400) return Math.round(s / 3600) + " h ago";
+    return day(t);
+  };
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const toast = (text) => { const t = el("div", "toast", text); t.setAttribute("role", "status"); document.body.appendChild(t); setTimeout(() => t.remove(), 2600); };
+  const frameAt = (cx, cy) => {
+    const wx = (cx - x) / z, wy = (cy - y) / z;
+    const f = frames.find((f) => wx >= f.x - minX && wx <= f.x - minX + f.width && wy >= f.y - minY && wy <= f.y - minY + f.height);
+    return f ? { f, fx: wx - (f.x - minX), fy: wy - (f.y - minY) } : null;
+  };
+  const frameOf = (name) => frames.find((f) => f.name === name);
+  const numberOf = (t) => threads.indexOf(t) + 1;
+
+  function setCommenting(on) {
+    if (!canComment) return;
+    commenting = on;
+    stage.classList.toggle("commenting", on);
+    const b = document.getElementById("comment");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+    if (on) toast("Click anywhere on the design to comment");
+  }
+
+  function renderPins() {
+    for (const p of world.querySelectorAll(".pin")) p.remove();
+    const list = draft ? threads.concat([draft]) : threads;
+    for (const t of list) {
+      const f = frameOf(t.frame);
+      if (!f) continue;
+      const pin = el("div", "pin" + (t.resolved ? " done" : "") + (t.id === openId ? " on" : "") + (t === draft ? " draft" : ""));
+      pin.style.left = f.x - minX + t.x + "px";
+      pin.style.top = f.y - minY + t.y + "px";
+      pin.style.transform = "scale(" + 1 / z + ")";
+      const b = el("button", null, t === draft ? "+" : String(numberOf(t)));
+      b.setAttribute("aria-label", t === draft ? "New comment" : "Comment " + numberOf(t) + " by " + t.messages[0].author.name);
+      if (t !== draft) b.onclick = (e) => { e.stopPropagation(); openThread(t.id); };
+      pin.appendChild(b);
+      world.appendChild(pin);
+    }
+    const open = threads.filter((t) => !t.resolved).length;
+    document.getElementById("count").textContent = String(open);
+    renderPanel();
+  }
+
+  function renderPanel() {
+    const list = document.getElementById("panel-list");
+    list.textContent = "";
+    if (!threads.length) { list.appendChild(el("div", "empty-list", "No comments yet. Press Comment, then click on the design.")); return; }
+    const sorted = threads.slice().sort((a, b) => Number(a.resolved) - Number(b.resolved) || b.updatedAt - a.updatedAt);
+    for (const t of sorted) {
+      const item = el("button", "item" + (t.resolved ? " done" : ""));
+      item.appendChild(el("span", "num", String(numberOf(t))));
+      const body = el("div");
+      const first = t.messages[0];
+      const who = el("div");
+      who.appendChild(el("b", null, first.author.name));
+      who.appendChild(el("small", null, "  " + ago(t.updatedAt) + (t.messages.length > 1 ? " · " + (t.messages.length - 1) + (t.messages.length === 2 ? " reply" : " replies") : "") + (t.resolved ? " · resolved" : "")));
+      body.appendChild(who);
+      body.appendChild(el("p", null, first.text));
+      item.appendChild(body);
+      item.onclick = () => { focusThread(t); if (innerWidth < 640) document.getElementById("panel").hidden = true; };
+      list.appendChild(item);
+    }
+  }
+
+  function focusThread(t) {
+    const f = frameOf(t.frame);
+    if (!f) return;
+    if (z < 0.35) z = Math.min(1, (innerWidth - side() * 2) / f.width);
+    const px = f.x - minX + t.x, py = f.y - minY + t.y;
+    x = innerWidth / 2 - px * z - (innerWidth >= 640 && !document.getElementById("panel").hidden ? 160 : 0);
+    // phones: the thread opens as a bottom sheet, so the pin goes in the top part
+    y = (innerWidth < 640 ? innerHeight * 0.22 : innerHeight / 2) - py * z;
+    apply();
+    openThread(t.id);
+  }
+
+  function closePop() {
+    pop.hidden = true;
+    pop.textContent = "";
+    openId = null;
+    popAnchor = null;
+    if (draft) draft = null;
+    renderPins();
+  }
+
+  function placePop() {
+    if (!pop || pop.hidden || !popAnchor) return;
+    if (innerWidth < 640) return; // a bottom sheet on phones
+    const f = frameOf(popAnchor.frame);
+    if (!f) return;
+    const sx = x + (f.x - minX + popAnchor.x) * z, sy = y + (f.y - minY + popAnchor.y) * z;
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    // beside the pin (which rises up and to the right of its point), never over it
+    let left = sx + 56, topPx = sy - 40;
+    if (left + w > innerWidth - 12) left = sx - w - 12;
+    pop.style.left = Math.max(12, left) + "px";
+    pop.style.top = Math.min(Math.max(64, topPx), innerHeight - h - 12) + "px";
+  }
+
+  function composer(placeholder, onPost) {
+    const box = el("form", "compose");
+    let nameInput = null;
+    if (!storedName()) {
+      nameInput = el("input");
+      nameInput.placeholder = "Your name";
+      nameInput.autocomplete = "name";
+      nameInput.maxLength = 60;
+      nameInput.setAttribute("aria-label", "Your name");
+      box.appendChild(nameInput);
+    }
+    const text = el("textarea");
+    text.rows = 3;
+    text.placeholder = placeholder;
+    text.maxLength = 4000;
+    text.setAttribute("aria-label", placeholder);
+    box.appendChild(text);
+    const actions = el("div", "compose-actions");
+    actions.appendChild(el("span", "hint", "⌘/Ctrl + Enter"));
+    const post = el("button", "btn-primary", "Post");
+    post.type = "submit";
+    actions.appendChild(post);
+    box.appendChild(actions);
+    const valid = () => text.value.trim() && (!nameInput || nameInput.value.trim());
+    const sync = () => { post.disabled = !valid(); };
+    sync();
+    box.oninput = sync;
+    text.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); box.requestSubmit(); } if (e.key === "Escape") closePop(); };
+    box.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!valid()) return;
+      if (nameInput) saveName(nameInput.value.trim());
+      post.disabled = true;
+      post.textContent = "Posting…";
+      try {
+        await onPost(text.value.trim(), storedName());
+      } catch (err) {
+        toast(err.message || "Couldn't post. Try again.");
+        post.textContent = "Post";
+        sync();
+      }
+    };
+    setTimeout(() => (nameInput || text).focus(), 30);
+    return box;
+  }
+
+  async function send(path, body) {
+    const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Couldn't post. Try again.");
+    return data;
+  }
+
+  function startComment(cx, cy) {
+    const hit = frameAt(cx, cy);
+    if (!hit) return;
+    openId = null;
+    draft = { id: "draft", frame: hit.f.name, x: Math.round(hit.fx), y: Math.round(hit.fy), resolved: false, messages: [] };
+    popAnchor = draft;
+    pop.textContent = "";
+    const head = el("div", "pop-head");
+    head.appendChild(el("span", null, "New comment on " + hit.f.name));
+    const close = el("button", null, "✕");
+    close.setAttribute("aria-label", "Cancel");
+    close.onclick = closePop;
+    head.appendChild(close);
+    pop.appendChild(head);
+    pop.appendChild(composer("Leave a comment", async (text, name) => {
+      const res = await send("comments", { text, name, frame: draft.frame, version: manifest.id, x: draft.x, y: draft.y });
+      draft = null;
+      threads.push(res.thread);
+      setCommenting(false);
+      openThread(res.thread.id);
+    }));
+    pop.hidden = false;
+    renderPins();
+    placePop();
+  }
+
+  function openThread(id) {
+    const t = threads.find((t) => t.id === id);
+    if (!t) return;
+    draft = null;
+    openId = id;
+    popAnchor = t;
+    pop.textContent = "";
+    const head = el("div", "pop-head");
+    head.appendChild(el("span", null, "#" + numberOf(t) + " · " + t.frame));
+    const close = el("button", null, "✕");
+    close.setAttribute("aria-label", "Close");
+    close.onclick = closePop;
+    head.appendChild(close);
+    pop.appendChild(head);
+    const msgs = el("div", "pop-msgs");
+    for (const m of t.messages) {
+      const row = el("div", "msg");
+      const who = el("div", "msg-who");
+      who.appendChild(el("b", null, m.author.name));
+      if (m.author.kind === "studio") who.appendChild(el("span", "badge", studioName));
+      who.appendChild(el("small", null, ago(m.at)));
+      row.appendChild(who);
+      row.appendChild(el("p", null, m.text));
+      msgs.appendChild(row);
+    }
+    pop.appendChild(msgs);
+    if (t.resolved) pop.appendChild(el("div", "resolved-note", "Resolved" + (t.resolvedBy ? " by " + t.resolvedBy.name : "") + ". You can still reply."));
+    if (t.version && t.version !== manifest.id) pop.appendChild(el("div", "resolved-note", "Left on an earlier version."));
+    pop.appendChild(composer("Reply", async (text, name) => {
+      const res = await send("comments/" + t.id, { text, name });
+      t.messages.push(res.message);
+      t.updatedAt = res.message.at;
+      openThread(t.id);
+    }));
+    pop.hidden = false;
+    renderPins();
+    placePop();
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("comments.json", { cache: "no-store" });
+      if (!res.ok) return;
+      const next = (await res.json()).threads || [];
+      const changed = JSON.stringify(next) !== JSON.stringify(threads);
+      threads = next;
+      if (!changed) return;
+      // keep a reply being typed: only redraw an open thread when its composer is empty
+      const typing = pop.querySelector("textarea");
+      if (openId && !(typing && typing.value)) openThread(openId);
+      else renderPins();
+    } catch {}
+  }
+
+  if (canComment) {
+    for (const id of ["comment", "comment-sep", "list"]) document.getElementById(id).hidden = false;
+    document.getElementById("comment").onclick = () => setCommenting(!commenting);
+    document.getElementById("list").onclick = () => { const p = document.getElementById("panel"); p.hidden = !p.hidden; };
+    document.getElementById("panel-close").onclick = () => (document.getElementById("panel").hidden = true);
+    await refresh();
+    setInterval(() => document.visibilityState === "visible" && refresh(), 15000);
+    addEventListener("visibilitychange", () => document.visibilityState === "visible" && refresh());
+  }
 })();
 </script>
 </body>

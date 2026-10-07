@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Check, CheckCircle2, CornerDownLeft, MessageCircle, Trash2, Undo2 } from "lucide-react";
 import { agentColor, useStore, type Camera, agentLabel } from "../lib/store";
-import { api, type CommentThread, type CanvasFrame } from "../lib/api";
+import { api, type CommentAuthor, type CommentThread, type CanvasFrame } from "../lib/api";
 import { fitBounds, frameHeight } from "../lib/actions";
 import { loadComments } from "../lib/sync";
 import { Tip } from "./controls";
 import { ago } from "../lib/time";
 
-export function Avatar({ author, size = 22 }: { author: { name: string; kind: "user" | "agent" }; size?: number }) {
+export function Avatar({ author, size = 22 }: { author: CommentAuthor; size?: number }) {
   const agent = author.kind === "agent";
   return (
-    <span className={`c-avatar${agent ? " agent" : ""}`} style={{ width: size, height: size, background: agent ? agentColor(author.name) : undefined, fontSize: size * 0.45 }}>
+    <span className={`c-avatar${agent ? " agent" : ""}${author.kind === "client" ? " client" : ""}`} style={{ width: size, height: size, background: agent ? agentColor(author.name) : undefined, fontSize: size * 0.45 }}>
       {agent ? <Bot size={size * 0.55} /> : author.name.slice(0, 1).toUpperCase()}
     </span>
   );
 }
 
-const who = (a: { name: string; kind: "user" | "agent" }) => (a.kind === "agent" ? agentLabel(a.name) : a.name);
+const who = (a: CommentAuthor) => (a.kind === "agent" ? agentLabel(a.name) : a.name);
+
+/** Marks a client's message (from a share link). */
+const ClientTag = ({ author }: { author: CommentAuthor }) => (author.kind === "client" ? <span className="c-client">Client</span> : null);
 
 type FramePos = (f: CanvasFrame) => { x: number; y: number; width: number; height: number | null };
 
@@ -183,7 +186,7 @@ function ThreadCard({ thread }: { thread: CommentThread }) {
             <Avatar author={m.author} size={20} />
             <div className="c-body">
               <div className="c-meta">
-                <strong>{who(m.author)}</strong> <span className="faint">{ago(m.at)}</span>
+                <strong>{who(m.author)}</strong> <ClientTag author={m.author} /> <span className="faint">{ago(m.at)}</span>
               </div>
               <div className="c-text">{m.text}</div>
             </div>
@@ -195,7 +198,8 @@ function ThreadCard({ thread }: { thread: CommentThread }) {
           </div>
         )}
       </div>
-      <Composer placeholder="Reply…" autoFocus={false} onSubmit={(text) => api.replyComment(canvas, thread.id, text).then(loadComments)} />
+      {thread.share && <div className="c-shared faint">On the share link: your reply goes to the client.</div>}
+      <Composer placeholder={thread.share ? "Reply to the client…" : "Reply…"} autoFocus={false} onSubmit={(text) => api.replyComment(canvas, thread.id, text).then(loadComments)} />
     </div>
   );
 }
@@ -245,6 +249,7 @@ export function CommentsTab() {
               <div className="c-body">
                 <div className="c-meta">
                   <strong>{who(first.author)}</strong>
+                  <ClientTag author={first.author} />
                   <span className="faint">
                     {t.frame} · {ago(last.at)}
                   </span>

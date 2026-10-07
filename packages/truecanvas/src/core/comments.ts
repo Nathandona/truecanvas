@@ -6,7 +6,8 @@ import { assertCanvasName } from "./scaffold.js";
 
 export interface CommentAuthor {
   name: string;
-  kind: "user" | "agent";
+  /** client: someone commenting on a share link (synced from the review site) */
+  kind: "user" | "agent" | "client";
 }
 
 export interface CommentMessage {
@@ -26,13 +27,19 @@ export interface CommentThread {
   node: { path: string; name: string } | null;
   resolved: boolean;
   resolvedBy?: CommentAuthor;
+  /** when `resolved` last changed, to sync it with a share link both ways */
+  resolvedAt?: number;
   messages: CommentMessage[];
   createdAt: number;
+  /** a client thread from a share link: replies and resolutions go back to it */
+  share?: { link: string; version: string };
 }
 
 interface CommentFile {
   version: 1;
   threads: CommentThread[];
+  /** client threads deleted here: the share link's sync doesn't bring them back */
+  dismissed?: string[];
 }
 
 /**
@@ -46,22 +53,33 @@ export class Comments {
     return path.join(this.config.root, this.config.canvasDir, `${assertCanvasName(canvas)}.comments.json`);
   }
 
-  list(canvas: string): CommentThread[] {
+  private read(canvas: string): CommentFile {
     try {
-      return (JSON.parse(fs.readFileSync(this.file(canvas), "utf8")) as CommentFile).threads ?? [];
+      const f = JSON.parse(fs.readFileSync(this.file(canvas), "utf8")) as CommentFile;
+      return { version: 1, threads: f.threads ?? [], dismissed: f.dismissed };
     } catch {
-      return [];
+      return { version: 1, threads: [] };
     }
   }
 
-  private save(canvas: string, threads: CommentThread[]) {
+  list(canvas: string): CommentThread[] {
+    return this.read(canvas).threads;
+  }
+
+  /** Ids of client threads deleted here. */
+  dismissed(canvas: string): Set<string> {
+    return new Set(this.read(canvas).dismissed ?? []);
+  }
+
+  private save(canvas: string, threads: CommentThread[], dismissed = this.read(canvas).dismissed) {
     const file = this.file(canvas);
-    if (!threads.length) {
+    if (!threads.length && !dismissed?.length) {
       if (fs.existsSync(file)) fs.rmSync(file);
       return;
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify({ version: 1, threads } satisfies CommentFile, null, 2)}\n`);
+    const data: CommentFile = { version: 1, threads, ...(dismissed?.length ? { dismissed } : {}) };
+    fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
   }
 
   private update(canvas: string, id: string, fn: (t: CommentThread) => void) {
@@ -103,13 +121,25 @@ export class Comments {
     return this.update(canvas, id, (t) => {
       t.resolved = resolved;
       t.resolvedBy = resolved ? author : undefined;
+      t.resolvedAt = Date.now();
     });
   }
 
+  /** Applies synced threads (from a share link) in one write; returns whether anything changed. */
+  merge(canvas: string, fn: (threads: CommentThread[]) => boolean): boolean {
+    const threads = this.list(canvas);
+    if (!fn(threads)) return false;
+    this.save(canvas, threads);
+    return true;
+  }
+
   remove(canvas: string, id: string) {
+    const { threads, dismissed = [] } = this.read(canvas);
+    const gone = threads.find((t) => t.id === id);
     this.save(
       canvas,
-      this.list(canvas).filter((t) => t.id !== id),
+      threads.filter((t) => t.id !== id),
+      gone?.share ? [...new Set([...dismissed, id])] : dismissed,
     );
   }
 

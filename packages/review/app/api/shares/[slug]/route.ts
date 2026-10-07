@@ -1,6 +1,6 @@
 import { hashPassword, isStudio } from "@/lib/auth";
 import { json, notFound } from "@/lib/http";
-import { getShare, saveShare } from "@/lib/store";
+import { deleteShare, getShare, saveShare } from "@/lib/store";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -10,6 +10,15 @@ export async function GET(req: Request, { params }: Params) {
   if (!share) return notFound();
   const { password, ...rest } = share;
   return json({ ...rest, password: !!password });
+}
+
+/** Deletes the link, its versions, files and comments. Studio only. */
+export async function DELETE(req: Request, { params }: Params) {
+  if (!isStudio(req)) return json({ error: "Unauthorized" }, 401);
+  const share = await getShare((await params).slug);
+  if (!share) return notFound();
+  await deleteShare(share);
+  return json({ ok: true });
 }
 
 /** Set or remove the password, revoke or restore the link, rename it. Studio only. */

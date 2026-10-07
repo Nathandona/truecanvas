@@ -866,6 +866,28 @@ test("vite plugin: stamps canvases and components, nothing else", () => {
   assert.equal(plugin.apply, "serve", "production builds are untouched");
 });
 
+test("comments: client threads from a share link merge in, and stay deleted when deleted here", () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-share-comments-"));
+  fs.writeFileSync(path.join(proj, "package.json"), "{}");
+  fs.mkdirSync(path.join(proj, "canvas"));
+  const w = new Workspace(loadConfig(proj));
+  const client = { id: "abcd2345", frame: "Main", x: 10, y: 20, node: null, resolved: false, messages: [{ id: "m1", author: { name: "Marie", kind: "client" }, text: "Bigger title?", at: 1 }], createdAt: 1, share: { link: "site-home-x", version: "20261007-000000" } };
+  assert.equal(w.comments.merge("demo", (threads) => (threads.push(client), true)), true);
+  w.comments.reply("demo", "abcd2345", "On it", { name: "Nathan", kind: "user" });
+  const t = w.comments.list("demo")[0];
+  assert.deepEqual(t.messages.map((m) => m.author.kind), ["client", "user"]);
+  assert.equal(t.share.link, "site-home-x");
+  w.comments.resolve("demo", "abcd2345", true, { name: "Nathan", kind: "user" });
+  assert.ok(w.comments.list("demo")[0].resolvedAt > 0, "resolutions are timestamped for syncing");
+  w.comments.remove("demo", "abcd2345");
+  assert.deepEqual([...w.comments.dismissed("demo")], ["abcd2345"], "a deleted client thread isn't synced back");
+  assert.equal(w.comments.list("demo").length, 0);
+  // internal threads leave no trace when deleted
+  const own = w.comments.add("demo", { frame: "Main", x: 0, y: 0, text: "note", author: { name: "Nathan", kind: "user" } });
+  w.comments.remove("demo", own.id);
+  assert.deepEqual([...w.comments.dismissed("demo")], ["abcd2345"]);
+});
+
 /** An isolated project with one canvas; `id(pred)` finds a layer's current id. */
 function project(canvasBody, files = {}) {
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), "truecanvas-fix-"));

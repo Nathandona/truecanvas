@@ -3801,3 +3801,20 @@ details.advanced summary::-webkit-details-marker {
   gap: 5px;
   margin: 0 0 10px;
 }
+
+.c-avatar.client {
+  background: var(--accent-soft, rgba(234, 106, 60, 0.15));
+  color: var(--accent);
+}
+.c-client {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--accent-soft, rgba(234, 106, 60, 0.15));
+  color: var(--accent);
+}
+.c-shared {
+  font-size: 11px;
+  padding: 6px 12px 0;
+}

@@ -21,7 +21,7 @@ Truecanvas renders your actual `.tsx` components on an infinite canvas and write
 - **Agent-first.** 45 MCP tools to read the tree, insert JSX, set props and classes, create frames and variants, and take screenshots.
 - **Design on real pages.** Link any Next.js page as a frame: editing its layers edits `page.tsx` and its layouts.
 - **Components and libraries.** Turn a selection into a component, edit main components, install icon sets (Lucide, Tabler, Phosphor, Heroicons, Radix) and add shadcn/ui components.
-- **Share with clients.** One click freezes a page into a private link on your own domain: clients look and comment in their browser, nothing to install.
+- **Share with clients.** One click freezes a page into a private link on your own domain: clients look and comment in their browser, nothing to install, and their comments land on your canvas for you or your agent to answer.
 - **Git built in.** Per-frame change summaries, branches, commits, pull requests with before/after images, visual compare and comments that travel with branches.
 - **Motion, devices, themes.** Scroll reveals and text animations, iPhone/Pixel/iPad presets with device chrome, and per-frame light and dark themes.
 - **Lightweight.** Frames render through your existing dev server. Headless Chromium only starts when an agent asks for a screenshot.
@@ -112,7 +112,7 @@ The **Truecanvas window** (`npx truecanvas open`) manages several projects in ta
 
 ## Share with clients
 
-**Share** (top right in the editor), `npx truecanvas share <canvas>`, or your agent's `share_canvas` renders every frame through your app and freezes it into static HTML and CSS: no scripts, so a link can never call your API or leak a session. It's published to your own review site as a new version of that page's link. Clients open it in any browser, with an optional password; `--revoke` takes a link down.
+**Share** (top right in the editor), `npx truecanvas share <canvas>`, or your agent's `share_canvas` renders every frame through your app and freezes it into static HTML and CSS: no scripts, so a link can never call your API or leak a session. It's published to your own review site as a new version of that page's link. Clients open it in any browser, with an optional password, and pin comments on the frames. Their threads sync into the canvas's comments while Truecanvas runs; your replies and your agent's (`reply_comment`, `resolve_comment`) go back to the link, under your studio's name. Comments you start in Truecanvas stay internal. `--revoke` takes a link down and `--delete` removes it with its comments.
 
 The review site is `packages/review`, a small Next.js app you deploy once to your Vercel account:
 

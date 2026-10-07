@@ -1,7 +1,7 @@
 import { viewerHtml } from "truecanvas/share";
 import { checkPassword, grantAccess, hasAccess } from "@/lib/auth";
 import { brand, esc, json, notFound } from "@/lib/http";
-import { blobPath, getShare, readFile, type Share } from "@/lib/store";
+import { addThread, applyToThread, blobPath, getShare, listThreads, newId, readFile, type Share, type Thread } from "@/lib/store";
 
 type Params = { params: Promise<{ slug: string; path?: string[] }> };
 
@@ -25,6 +25,7 @@ export async function GET(req: Request, { params }: Params) {
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-cache", "referrer-policy": "no-referrer" } });
   }
   if (path.length === 1 && path[0] === "manifest.json") return json(manifest(share, new URL(req.url).searchParams.get("v")));
+  if (path.length === 1 && path[0] === "comments.json") return json({ threads: await listThreads(slug) });
 
   if (path[0] === "v" && path.length >= 4) {
     const [, version, kind, ...rest] = path;
@@ -49,11 +50,42 @@ export async function GET(req: Request, { params }: Params) {
   return notFound();
 }
 
-/** Password form posts here. */
+/** The password form, and clients' comments: a new thread (comments) or a reply (comments/<id>). */
 export async function POST(req: Request, { params }: Params) {
   const { slug, path = [] } = await params;
   const share = await getShare(slug);
-  if (!share || share.revoked || !share.password || path.join("/") !== "unlock") return notFound();
+  if (!share || share.revoked) return notFound();
+  if (path[0] === "comments" && path.length <= 2) {
+    if (!(await hasAccess(slug, share.password))) return notFound();
+    const body = (await req.json().catch(() => ({}))) as { text?: string; name?: string; frame?: string; version?: string; x?: number; y?: number };
+    const text = String(body.text ?? "").trim().slice(0, 4000);
+    const name = String(body.name ?? "").trim().slice(0, 60);
+    if (!text || !name) return json({ error: "Write a comment and your name." }, 400);
+    const now = Date.now();
+    const message = { id: newId(), author: { name, kind: "client" as const }, text, at: now };
+    if (path.length === 2) return (await applyToThread(slug, path[1], { message, at: now })) ? json({ ok: true, message }) : notFound();
+    const version = share.versions.find((v) => v.id === body.version) ?? share.versions[share.versions.length - 1];
+    const frame = version.frames.find((f) => f.name === body.frame);
+    if (!frame || typeof body.x !== "number" || typeof body.y !== "number") return json({ error: "Pin the comment on a frame." }, 400);
+    const thread: Thread = {
+      id: newId(),
+      frame: frame.name,
+      version: version.id,
+      x: Math.round(Math.min(Math.max(body.x, 0), frame.width)),
+      y: Math.round(Math.min(Math.max(body.y, 0), frame.height)),
+      resolved: false,
+      messages: [message],
+      createdAt: now,
+      updatedAt: now,
+    };
+    try {
+      await addThread(slug, thread);
+    } catch (err) {
+      return json({ error: (err as Error).message }, 429);
+    }
+    return json({ ok: true, thread });
+  }
+  if (!share.password || path.join("/") !== "unlock") return notFound();
   const form = await req.formData().catch(() => null);
   const password = String(form?.get("password") ?? "");
   if (!checkPassword(password, share.password)) return passwordPage(share, true);
@@ -74,6 +106,7 @@ function manifest(share: Share, wanted: string | null) {
     frames: current.frames.map((f) => ({ ...f, html: `v/${current.id}/${f.html}`, image: `v/${current.id}/${f.image}` })),
     versions: versions.map((v, i) => ({ id: v.id, createdAt: v.createdAt, latest: i === 0 })),
     brand: brand(),
+    comments: true,
   };
 }
 

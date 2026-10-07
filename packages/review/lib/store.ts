@@ -1,5 +1,5 @@
 import { Redis } from "@upstash/redis";
-import { get, put } from "@vercel/blob";
+import { del, get, list, put } from "@vercel/blob";
 import type { ShareFrame } from "truecanvas/share";
 
 /*
@@ -39,6 +39,8 @@ const key = {
   share: (slug: string) => `tc:share:${slug}`,
   index: (project: string, canvas: string) => `tc:index:${project}/${canvas}`,
   assets: (slug: string) => `tc:assets:${slug}`,
+  comments: (slug: string) => `tc:comments:${slug}`,
+  updated: (slug: string) => `tc:comments-updated:${slug}`,
 };
 
 export async function getShare(slug: string): Promise<Share | null> {
@@ -90,4 +92,94 @@ export async function putFile(path: string, body: ArrayBuffer, contentType: stri
 export async function readFile(path: string) {
   const res = await get(path, { access: "private" });
   return res && res.statusCode === 200 ? res : null;
+}
+
+/** Removes a link entirely: its record, comments and every file. */
+export async function deleteShare(share: Share) {
+  const r = redis();
+  await r.del(key.share(share.slug), key.assets(share.slug), key.comments(share.slug), key.updated(share.slug));
+  if ((await r.get<string>(key.index(share.project, share.canvas))) === share.slug) await r.del(key.index(share.project, share.canvas));
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `shares/${share.slug}/`, cursor, limit: 1000 });
+    if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+}
+
+// ---------- comments ----------
+
+export interface CommentAuthor {
+  name: string;
+  /** client: someone with the link; studio: the studio (from Truecanvas) */
+  kind: "client" | "studio";
+}
+
+export interface CommentMessage {
+  id: string;
+  author: CommentAuthor;
+  text: string;
+  at: number;
+}
+
+export interface Thread {
+  id: string;
+  frame: string;
+  /** the version it was placed on */
+  version: string;
+  x: number;
+  y: number;
+  resolved: boolean;
+  resolvedAt?: number;
+  resolvedBy?: CommentAuthor;
+  messages: CommentMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+
+export async function listThreads(slug: string): Promise<Thread[]> {
+  const all = (await redis().hgetall<Record<string, Thread>>(key.comments(slug))) ?? {};
+  return Object.values(all).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function commentsUpdated(slug: string): Promise<number> {
+  return Number((await redis().get<number>(key.updated(slug))) ?? 0);
+}
+
+export async function addThread(slug: string, thread: Thread) {
+  if ((await redis().hlen(key.comments(slug))) >= 1000) throw new Error("This link has too many comments.");
+  await redis().hset(key.comments(slug), { [thread.id]: thread });
+  await redis().set(key.updated(slug), thread.updatedAt);
+}
+
+/*
+ * Replies and resolutions are applied inside Redis, so a client and the
+ * studio writing at the same moment never overwrite each other. A message
+ * whose id is already there is skipped (the studio's sync can retry safely).
+ */
+const APPLY = `
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then return 0 end
+local t = cjson.decode(raw)
+local op = cjson.decode(ARGV[2])
+if op.message then
+  local seen = false
+  for _, m in ipairs(t.messages) do if m.id == op.message.id then seen = true end end
+  if not seen then table.insert(t.messages, op.message) end
+end
+if op.resolved ~= nil then
+  t.resolved = op.resolved
+  t.resolvedAt = op.at
+  if op.resolved then t.resolvedBy = op.by else t.resolvedBy = nil end
+end
+t.updatedAt = op.at
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(t))
+redis.call('SET', KEYS[2], op.at)
+return 1`;
+
+export async function applyToThread(slug: string, threadId: string, op: { message?: CommentMessage; resolved?: boolean; by?: CommentAuthor; at: number }): Promise<boolean> {
+  const done = await redis().eval(APPLY, [key.comments(slug), key.updated(slug)], [threadId, JSON.stringify(op)]);
+  return done === 1;
 }

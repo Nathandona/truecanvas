@@ -579,8 +579,9 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             if (node && node.name === t.node.name) where = `\non [${node.id}] ${node.name}:\n\`\`\`tsx\n${source.slice(node.start, node.end)}\n\`\`\``;
             else where = `\non a ${t.node.name} (it may have moved)`;
           }
-          const msgs = t.messages.map((m) => `  ${m.author.name}${m.author.kind === "agent" ? " (agent)" : ""}: ${m.text}`).join("\n");
-          return `thread ${t.id}${t.resolved ? " [resolved]" : ""} in frame "${t.frame}" at ${t.x},${t.y}${where}\n${msgs}`;
+          const msgs = t.messages.map((m) => `  ${m.author.name}${m.author.kind === "agent" ? " (agent)" : m.author.kind === "client" ? " (client)" : ""}: ${m.text}`).join("\n");
+          const shared = t.share ? " [from a client on the share link: replies and resolving are sent to the client]" : "";
+          return `thread ${t.id}${t.resolved ? " [resolved]" : ""}${shared} in frame "${t.frame}" at ${t.x},${t.y}${where}\n${msgs}`;
         });
         return text(parts.join("\n\n"));
       } catch (e) {

@@ -84,6 +84,14 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
   return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password: opts.password === undefined ? share.password : !!opts.password };
 }
 
+/** Deletes a canvas's link with its versions, files and comments. */
+export async function deleteShare(site: ReviewSite, project: string, canvas: string): Promise<boolean> {
+  const found = (await request(site, "GET", `/api/shares?project=${encodeURIComponent(project)}&canvas=${encodeURIComponent(canvas)}`)) as { slug: string | null };
+  if (!found.slug) return false;
+  await request(site, "DELETE", `/api/shares/${found.slug}`);
+  return true;
+}
+
 /** Revokes or restores a canvas's link, or changes its password. */
 export async function updateShare(site: ReviewSite, project: string, canvas: string, change: { revoked?: boolean; password?: string | null }) {
   const share = (await request(site, "POST", "/api/shares", { project, canvas })) as { slug: string; url: string };

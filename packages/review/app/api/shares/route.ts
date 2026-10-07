@@ -2,9 +2,16 @@ import { isStudio } from "@/lib/auth";
 import { brand, json } from "@/lib/http";
 import { createShare, findShare } from "@/lib/store";
 
-/** Checks the studio token (Truecanvas runs this when connecting). */
+/** Checks the studio token (Truecanvas runs this when connecting), or finds a canvas's link without creating one. */
 export async function GET(req: Request) {
   if (!isStudio(req)) return json({ error: "Unauthorized" }, 401);
+  const q = new URL(req.url).searchParams;
+  const project = q.get("project");
+  const canvas = q.get("canvas");
+  if (project && canvas) {
+    const share = await findShare(project, canvas);
+    return json({ slug: share && !share.revoked ? share.slug : null });
+  }
   return json({ ok: true, brand: brand() });
 }
 
