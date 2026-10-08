@@ -7,3 +7,6 @@ dist
 *.tgz
 .vercel
 .env*
+
+# Claude Code worktrees
+.claude/worktrees/
