@@ -51,15 +51,23 @@ async function isHub(port: number): Promise<boolean> {
 }
 
 /**
- * The hub's port: 4800, where agents' MCP URL points. When a Truecanvas hub
- * already answers there (started with `truecanvas open`), the app shows that
- * one instead of starting a second. When something else holds 4800, the next
- * free port; the hub writes it down so the CLI finds it.
+ * The hub's port: 4800, where agents' MCP URL points. When another Truecanvas
+ * hub already runs there (`truecanvas open`, the old launcher, an older
+ * version), the app asks it to quit and takes over, so what you see is always
+ * the version that ships with the app; its projects reopen on demand. If it
+ * won't let go, the app shows it rather than starting a second one. When
+ * something else holds 4800, the next free port; the hub writes it down so the
+ * CLI finds it.
  */
 async function pickPort(): Promise<{ port: number; attach: boolean }> {
   const forced = Number(process.env.TRUECANVAS_DESKTOP_PORT);
   if (forced) return { port: forced, attach: false };
-  if (await isHub(HUB_PORT)) return { port: HUB_PORT, attach: true };
+  if (await isHub(HUB_PORT)) {
+    await fetch(`http://localhost:${HUB_PORT}/api/hub/quit`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
+    for (let i = 0; i < 40 && !(await portFree(HUB_PORT)); i++) await new Promise((r) => setTimeout(r, 250));
+    if (!(await portFree(HUB_PORT))) return { port: HUB_PORT, attach: true };
+    log("took over from a running hub", { port: HUB_PORT });
+  }
   if (await portFree(HUB_PORT)) return { port: HUB_PORT, attach: false };
   for (let p = 4801; p < 4900; p++) if (await portFree(p)) return { port: p, attach: false };
   throw new Error("No free port for Truecanvas");
