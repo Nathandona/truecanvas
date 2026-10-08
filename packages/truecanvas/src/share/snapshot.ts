@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { findDevice } from "../core/devices.js";
+import { routeOf } from "../core/routes.js";
 import type { Workspace } from "../core/workspace.js";
 import type { RawSnapshot, Screenshotter } from "../server/screenshot.js";
 import { viewerHtml } from "./viewer.js";
@@ -28,6 +29,8 @@ export interface ShareFrame {
   /** paths inside the snapshot */
   html: string;
   image: string;
+  /** a frame linked to a page: its URL in the app (e.g. "/pricing"), so the live site can show it */
+  route?: string;
 }
 
 export interface ShareManifest {
@@ -72,7 +75,9 @@ export async function createSnapshot(ws: Workspace, shots: Screenshotter, canvas
     used.add(slug);
     fs.writeFileSync(path.join(dir, "frames", `${slug}.html`), await freeze(raw, assets));
     fs.writeFileSync(path.join(dir, "frames", `${slug}.png`), raw.png);
-    out.push({ name: f.frameName, x: f.x, y: f.y, width: raw.width, height: f.height ?? raw.height, theme: f.theme, device: f.device, html: `frames/${slug}.html`, image: `frames/${slug}.png` });
+    // only Next.js pages have a URL we can work out from their file
+    const route = f.page && ws.config.framework === "next" ? routeOf(ws.config, f.page) : undefined;
+    out.push({ name: f.frameName, x: f.x, y: f.y, width: raw.width, height: f.height ?? raw.height, theme: f.theme, device: f.device, html: `frames/${slug}.html`, image: `frames/${slug}.png`, ...(route ? { route } : {}) });
   }
   const manifest: ShareManifest = {
     format: 1,

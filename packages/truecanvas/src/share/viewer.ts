@@ -304,6 +304,32 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
       : '<a class="who-btn" href="/signin?next=' + encodeURIComponent(here) + '">Sign in</a>'));
   }
 
+  // a page frame of a version with a live site shows the real site, on its own origin
+  function liveSrc(path) {
+    const home = new URL(manifest.live.url);
+    const url = new URL(path || "/", home);
+    const token = home.searchParams.get("tc_access");
+    if (token) url.searchParams.set("tc_access", token);
+    return url.href;
+  }
+  const showsLive = (f) => !!(manifest.live && f.route);
+  /**
+   * A frame outside a live session: the real site for page frames of a version
+   * that has one (animations and all), the frozen copy otherwise. The frozen
+   * image stays underneath until the iframe has loaded.
+   */
+  function restFrame(f, iframe, img) {
+    if (showsLive(f)) {
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+      iframe.setAttribute("referrerpolicy", "no-referrer");
+      iframe.src = liveSrc(f.route);
+    } else {
+      iframe.setAttribute("sandbox", "");
+      iframe.src = f.html;
+    }
+    iframe.addEventListener("load", () => { iframe.classList.add("ready"); if (showsLive(f) && img) img.style.visibility = "hidden"; });
+  }
+
   // layout: frames at their canvas positions
   const frames = manifest.frames;
   const minX = Math.min(...frames.map((f) => f.x)), minY = Math.min(...frames.map((f) => f.y));
@@ -314,9 +340,8 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     el.className = "frame";
     el.style.cssText = "left:" + (f.x - minX) + "px;top:" + (f.y - minY) + "px;width:" + f.width + "px;height:" + f.height + "px";
     el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="Open the live site at this width"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>View live</button>' : "") + "</div>" +
-      '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe sandbox title="' + esc(f.name) + '" scrolling="no" loading="lazy" src="' + esc(f.html) + '"></iframe></div>';
-    const iframe = el.querySelector("iframe");
-    iframe.addEventListener("load", () => iframe.classList.add("ready"));
+      '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe title="' + esc(f.name) + '" scrolling="no" loading="lazy"></iframe></div>';
+    restFrame(f, el.querySelector("iframe"), el.querySelector("img"));
     const liveBtn = el.querySelector(".live-btn");
     if (liveBtn) liveBtn.onclick = (e) => { e.stopPropagation(); openLive(f); };
     el.dataset.name = f.name;
@@ -475,7 +500,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     iframe.title = "Live site: " + f.name;
     iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
     iframe.setAttribute("referrerpolicy", "no-referrer");
-    iframe.src = manifest.live.url;
+    iframe.src = f.route ? liveSrc(f.route) : manifest.live.url;
     liveDevice.appendChild(iframe);
     document.getElementById("live-name").textContent = f.name;
     document.getElementById("live-tab").href = manifest.live.url;
@@ -829,13 +854,12 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
           next.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
           next.setAttribute("referrerpolicy", "no-referrer");
           next.src = sessionFrame(f);
+          next.addEventListener("load", () => { next.classList.add("ready"); if (img) img.style.visibility = "hidden"; });
         } else {
-          next.setAttribute("sandbox", "");
           next.loading = "lazy";
-          next.src = f.html;
           if (img) img.style.visibility = "";
+          restFrame(f, next, img);
         }
-        next.addEventListener("load", () => { next.classList.add("ready"); if (on && img) img.style.visibility = "hidden"; });
         old.replaceWith(next);
       }
       renderRoom();
