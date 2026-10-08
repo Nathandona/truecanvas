@@ -38,6 +38,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #stage.panning { cursor: grabbing; }
 #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .frame { position: absolute; }
+/* real-site frames: one click to interact with them, like an embedded prototype */
+.frame.live-frame .frame-box { cursor: pointer; }
+.frame.live-frame:not(.interacting) .frame-box::after { content: "Click to interact"; position: absolute; left: 50%; top: 16px; transform: translateX(-50%); padding: 6px 12px; border-radius: 999px; background: rgba(28,27,25,.86); color: #fff; font-size: 12px; font-weight: 550; opacity: 0; transition: opacity .15s var(--ease-out); pointer-events: none; }
+.frame.live-frame:not(.interacting) .frame-box:hover::after { opacity: 1; }
+#stage.commenting .frame.live-frame .frame-box::after, #stage.panning .frame.live-frame .frame-box::after { opacity: 0 !important; }
+.frame.interacting .frame-box { outline: 2px solid var(--accent); outline-offset: 2px; cursor: auto; }
+.frame.interacting .frame-box iframe { pointer-events: auto; }
+.interact-tag { display: none; margin-left: 8px; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; }
+.frame.interacting .interact-tag { display: inline-flex; }
+.interact-tag button { height: 20px; padding: 0 8px; border-radius: 6px; border: 0; background: var(--accent); color: #fff; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
 .frame-label { position: absolute; left: 0; bottom: 100%; padding-bottom: 6px; white-space: nowrap; color: var(--muted);
   font-size: 12px; transform-origin: 0 100%; }
 .frame-label b { color: var(--text); font-weight: 550; margin-right: 6px; }
@@ -319,6 +329,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
    * image stays underneath until the iframe has loaded.
    */
   function restFrame(f, iframe, img) {
+    iframe.closest(".frame")?.classList.toggle("live-frame", showsLive(f));
     if (showsLive(f)) {
       iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
       iframe.setAttribute("referrerpolicy", "no-referrer");
@@ -339,11 +350,12 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     const el = document.createElement("div");
     el.className = "frame";
     el.style.cssText = "left:" + (f.x - minX) + "px;top:" + (f.y - minY) + "px;width:" + f.width + "px;height:" + f.height + "px";
-    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="Open the live site at this width"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>View live</button>' : "") + "</div>" +
+    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="Open the live site at this width"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>View live</button>' : "") + '<span class="interact-tag">Interacting<button type="button" class="interact-done">Done</button></span>' + "</div>" +
       '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe title="' + esc(f.name) + '" scrolling="no" loading="lazy"></iframe></div>';
     restFrame(f, el.querySelector("iframe"), el.querySelector("img"));
     const liveBtn = el.querySelector(".live-btn");
     if (liveBtn) liveBtn.onclick = (e) => { e.stopPropagation(); openLive(f); };
+    el.querySelector(".interact-done").onclick = (e) => { e.stopPropagation(); setInteracting(null); };
     el.dataset.name = f.name;
     world.appendChild(el);
     labels.push(el.querySelector(".frame-label"));
@@ -402,7 +414,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   let moved = false, downAt = null;
   stage.addEventListener("pointerdown", (e) => {
     // pins and View live are buttons: they take their own clicks
-    if (e.target.closest && e.target.closest(".pin, .live-btn")) return;
+    if (e.target.closest && e.target.closest(".pin, .live-btn, .interact-done")) return;
     stage.setPointerCapture(e.pointerId);
     moved = false;
     downAt = { x: e.clientX, y: e.clientY };
@@ -432,6 +444,16 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   stage.addEventListener("pointerup", end);
   stage.addEventListener("pointercancel", end);
 
+  // the frame that has the mouse (its own scripts, clicks and forms), or null
+  let interacting = null;
+  function setInteracting(frameEl) {
+    if (interacting) interacting.classList.remove("interacting");
+    interacting = frameEl;
+    if (frameEl) frameEl.classList.add("interacting");
+  }
+  // the live session swaps frames: whatever had the mouse goes back to the canvas
+  addEventListener("tc:frames-swapped", () => setInteracting(null));
+
   // double click (or double tap) a frame: read it at full width; elsewhere: everything in view
   let lastTap = 0;
   const zoomToFrameAt = (cx, cy) => {
@@ -450,6 +472,12 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     downAt = null;
     // comment mode: a tap on a frame starts a comment there
     if (commenting) return startComment(e.clientX, e.clientY);
+    // a real-site frame: one click hands it the mouse; a click elsewhere takes it back
+    // the stage captured the pointer: look under it rather than at e.target
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const hit = under && under.closest ? under.closest(".frame.live-frame") : null;
+    if (hit && !hit.classList.contains("interacting")) { setInteracting(hit); lastTap = 0; return; }
+    if (!hit && interacting) { setInteracting(null); return; }
     const now = Date.now();
     if (now - lastTap < 320) { zoomToFrameAt(e.clientX, e.clientY); lastTap = 0; }
     else lastTap = now;
@@ -462,7 +490,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   addEventListener("keydown", (e) => {
     if (liveOpen()) { if (e.key === "Escape") closeLive(); return; }
     if (e.target.closest && e.target.closest("input, textarea, select")) return;
-    if (e.key === "Escape") { closePop(); setCommenting(false); return; }
+    if (e.key === "Escape") { closePop(); setCommenting(false); setInteracting(null); return; }
     if ((e.key === "c" || e.key === "C") && canComment && !e.metaKey && !e.ctrlKey) { setCommenting(!commenting); return; }
     if (e.key === "+" || e.key === "=") zoomAt(z * 1.25, ...center());
     else if (e.key === "-") zoomAt(z / 1.25, ...center());
@@ -551,6 +579,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   function setCommenting(on) {
     if (!canComment) return;
     commenting = on;
+    if (on) setInteracting(null);
     stage.classList.toggle("commenting", on);
     const b = document.getElementById("comment");
     b.classList.toggle("on", on);
@@ -854,14 +883,17 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
           next.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
           next.setAttribute("referrerpolicy", "no-referrer");
           next.src = sessionFrame(f);
+          frameEl.classList.add("live-frame");
           next.addEventListener("load", () => { next.classList.add("ready"); if (img) img.style.visibility = "hidden"; });
         } else {
           next.loading = "lazy";
           if (img) img.style.visibility = "";
-          restFrame(f, next, img);
         }
         old.replaceWith(next);
+        // in the page now: restFrame marks the frame as a real-site one or not
+        if (!on) restFrame(f, next, img);
       }
+      dispatchEvent(new Event("tc:frames-swapped"));
       renderRoom();
       toast(on ? "Live: you're seeing the design as the studio works on it" : "The live session ended: back to the published version");
     }
