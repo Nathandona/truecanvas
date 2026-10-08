@@ -182,6 +182,9 @@ async function buildTrayMenu() {
   const projects = await recentProjects();
   const session = await liveSessionItem();
   const items: MenuItemConstructorOptions[] = [
+    { label: `Truecanvas ${app.getVersion()}`, enabled: false },
+    updateItem(),
+    { type: "separator" },
     { label: "Open Truecanvas", click: showWindow },
     { type: "separator" },
     ...(projects.length
@@ -232,12 +235,99 @@ async function quit() {
   }
 }
 
-function checkForUpdates() {
-  if (TEST || !app.isPackaged || process.env.TRUECANVAS_NO_UPDATE === "1") return;
-  // AppImage, deb, macOS and Windows builds update from GitHub releases
-  import("electron-updater")
-    .then(({ autoUpdater }) => autoUpdater.checkForUpdatesAndNotify())
-    .catch(() => {});
+// ---------- updates: from GitHub releases (AppImage, deb, macOS, Windows) ----------
+
+type UpdateState =
+  | { state: "idle" | "checking" | "latest" }
+  | { state: "downloading"; version: string; percent: number }
+  | { state: "ready"; version: string }
+  | { state: "error"; message: string };
+let update: UpdateState = { state: "idle" };
+/** a check the person asked for (tray or window menu): say the outcome, even "up to date" */
+let askedForUpdate = false;
+type Updater = (typeof import("electron-updater"))["autoUpdater"];
+let updater: Promise<Updater | null> | null = null;
+
+const updatesOn = () => !TEST && app.isPackaged && process.env.TRUECANVAS_NO_UPDATE !== "1";
+
+function getUpdater(): Promise<Updater | null> {
+  updater ??= import("electron-updater")
+    .then(({ autoUpdater }) => {
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      const set = (u: UpdateState) => {
+        update = u;
+        void buildTrayMenu();
+      };
+      autoUpdater.on("checking-for-update", () => set({ state: "checking" }));
+      autoUpdater.on("update-not-available", () => {
+        set({ state: "latest" });
+        if (askedForUpdate) say("Truecanvas is up to date", `You have the latest version, ${app.getVersion()}.`);
+        askedForUpdate = false;
+      });
+      autoUpdater.on("update-available", (info) => set({ state: "downloading", version: info.version, percent: 0 }));
+      autoUpdater.on("download-progress", (p) => {
+        if (update.state === "downloading") set({ ...update, percent: Math.round(p.percent) });
+      });
+      autoUpdater.on("update-downloaded", (info) => {
+        set({ state: "ready", version: info.version });
+        say(`Truecanvas ${info.version} is ready`, "Restart from the tray menu to update, or it installs when you quit.");
+        askedForUpdate = false;
+      });
+      autoUpdater.on("error", (err) => {
+        set({ state: "error", message: err.message });
+        if (askedForUpdate) say("Couldn't check for updates", err.message);
+        askedForUpdate = false;
+      });
+      return autoUpdater;
+    })
+    .catch(() => null);
+  return updater;
+}
+
+function say(title: string, body: string) {
+  log("update", { title, body });
+  if (Notification.isSupported()) new Notification({ title, body, silent: true }).show();
+}
+
+function checkForUpdates(asked = false) {
+  if (!updatesOn()) {
+    if (asked) say("Updates", "This build doesn't update itself (development or a test run).");
+    return;
+  }
+  if (update.state === "checking" || update.state === "downloading") return;
+  if (update.state === "ready") {
+    if (asked) say(`Truecanvas ${update.version} is ready`, "Restart from the tray menu to update.");
+    return;
+  }
+  askedForUpdate = asked;
+  void getUpdater().then((u) => u?.checkForUpdates().catch(() => {}));
+}
+
+/** Stops the projects first (like Quit), then installs the downloaded version and reopens. */
+async function restartToUpdate() {
+  const u = await getUpdater();
+  if (!u || update.state !== "ready") return;
+  quitting = true;
+  try {
+    await hub?.shutdown();
+  } finally {
+    tray?.destroy();
+    u.quitAndInstall(true, true);
+  }
+}
+
+function updateItem(): MenuItemConstructorOptions {
+  switch (update.state) {
+    case "checking":
+      return { label: "Checking for updates…", enabled: false };
+    case "downloading":
+      return { label: `Downloading ${update.version}… ${update.percent}%`, enabled: false };
+    case "ready":
+      return { label: `Restart to update to ${update.version}`, click: () => void restartToUpdate() };
+    default:
+      return { label: "Check for updates", click: () => checkForUpdates(true) };
+  }
 }
 
 async function main() {
@@ -276,6 +366,10 @@ async function main() {
   }
   log("ready", { origin, attach, port });
 
+  ipcMain.handle("truecanvas:check-updates", () => {
+    checkForUpdates(true);
+    return update.state;
+  });
   ipcMain.handle("truecanvas:live-session", async () => {
     if (!hub) throw new Error("This window shows a Truecanvas started from the command line: live sessions start there.");
     const sessions = await hub.liveSession.toggle();
@@ -288,6 +382,8 @@ async function main() {
   // asked to start hidden, but there is no tray to come back from
   if (startHidden && !tray && !TEST) showWindow();
   checkForUpdates();
+  // and every few hours while the app stays open
+  setInterval(() => checkForUpdates(), 4 * 60 * 60 * 1000).unref();
 }
 
 void main().catch((err) => {

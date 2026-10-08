@@ -20,6 +20,8 @@ import {
   Search,
   Wand2,
   X,
+  Download,
+  Info,
 } from "lucide-react";
 import { Menu } from "../components/Menu";
 import { Tip } from "../components/controls";
@@ -36,6 +38,8 @@ interface Project {
 }
 interface HubState {
   origin: string;
+  /** the running Truecanvas's version */
+  version?: string;
   active: string | null;
   /** the CLI asked to show this project (`truecanvas` run inside it), or a notification, with one of its canvases */
   focus: { path: string; at: number; canvas?: string } | null;
@@ -252,7 +256,7 @@ export function HubApp() {
               </span>
             </Tip>
           )}
-          <AppMenu onQuit={() => setQuit(true)} />
+          <AppMenu version={state?.version} onQuit={() => setQuit(true)} />
         </div>
       </header>
 
@@ -301,11 +305,16 @@ function ProjectIcon({ path: dir, size = 14 }: { path: string; size?: number }) 
   return <img className="project-favicon" src={`/api/hub/icon?path=${encodeURIComponent(dir)}`} width={size} height={size} alt="" onError={() => setFailed(true)} />;
 }
 
-function AppMenu({ onQuit }: { onQuit: () => void }) {
+/* the desktop app's bridge (preload.ts): absent in a browser */
+type DesktopBridge = { version: string; checkForUpdates?: () => Promise<string> };
+const desktop = (window as unknown as { truecanvasDesktop?: DesktopBridge }).truecanvasDesktop;
+
+function AppMenu({ version, onQuit }: { version?: string; onQuit: () => void }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const shown = desktop?.version || version || "";
   return (
     <>
-      <Tip label="Truecanvas" side="bottom">
+      <Tip label={shown ? `Truecanvas ${shown}` : "Truecanvas"} side="bottom">
         <button
           className="icon-btn app-menu-btn"
           aria-label="Truecanvas menu"
@@ -323,6 +332,13 @@ function AppMenu({ onQuit }: { onQuit: () => void }) {
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            ...(shown
+              ? [{ label: `Truecanvas ${shown}: what's new`, icon: <Info size={14} />, onSelect: () => window.open(`https://github.com/Nathandona/truecanvas/releases/tag/v${shown}`, "_blank") }]
+              : []),
+            ...(desktop?.checkForUpdates
+              ? [{ label: "Check for updates", icon: <Download size={14} />, onSelect: () => void desktop.checkForUpdates!() }]
+              : []),
+            ...(shown || desktop?.checkForUpdates ? ["sep" as const] : []),
             { label: "Reload window", icon: <RefreshCw size={14} />, kbd: "Ctrl+R", onSelect: () => location.reload() },
             "sep",
             { label: "Quit Truecanvas", icon: <Power size={14} />, kbd: "Ctrl+Q", danger: true, onSelect: onQuit },

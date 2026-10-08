@@ -66,6 +66,14 @@ export async function startHub(opts: HubOptions) {
   const store = new ProjectStore();
   const editorDir = fileURLToPath(new URL("./editor/", import.meta.url));
   const pkgDir = path.resolve(path.dirname(opts.cli), "..");
+  // shown in the window's menu, so you always know which Truecanvas runs
+  const version = (() => {
+    try {
+      return (JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")) as { version: string }).version;
+    } catch {
+      return "";
+    }
+  })();
   const origin = `http://localhost:${opts.port}`;
   const allowedHosts = new Set([`localhost:${opts.port}`, `127.0.0.1:${opts.port}`]);
 
@@ -145,6 +153,7 @@ export async function startHub(opts: HubOptions) {
     const live = await Promise.all(running.map(async (dir) => [dir, await sessionsOf(dir)] as const));
     return {
       origin,
+      version,
       active,
       focus,
       notice: opts.notice ?? null,
