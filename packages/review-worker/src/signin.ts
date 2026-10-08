@@ -1,5 +1,5 @@
 import type { ReviewEnv } from "./env";
-import { esc, notFound, page, safeNext, sameOrigin } from "./http";
+import { esc, icon, notFound, page, safeNext, sameOrigin } from "./http";
 import { addMember, findInvite, isEmail, listInvites, listMembers, maySignIn, normalEmail, removeMember } from "./people";
 import { createSignIn, nameFromEmail as defaultName, sendLinkEmail, signInOn, signOutHeaders, verifyUrl, viewerOf, type Viewer } from "./session";
 import { getShare, listShares } from "./store";
@@ -166,29 +166,36 @@ async function members(req: Request, env: ReviewEnv): Promise<Response> {
   const rows = list
     .map(
       (m) =>
-        `<li><span>${esc(m.email)}${m.addedBy ? `<br><span class="sub">Added by ${esc(m.addedBy)}</span>` : ""}</span>${
+        `<li><span class="avatar" aria-hidden="true">${esc(m.email.slice(0, 1).toUpperCase())}</span><span class="grow"><span>${esc(m.email)}${m.email === viewer.email ? ' <span class="sub">(you)</span>' : ""}</span>${
+          m.addedBy ? `<span class="sub">Added by ${esc(m.addedBy)}</span>` : '<span class="sub">From the site settings</span>'
+        }</span>${
           m.owner
-            ? '<span class="tag">Owner</span>'
+            ? '<span class="chip">Owner</span>'
             : viewer.owner
-              ? `<form method="post" action="/members" class="inline"><input type="hidden" name="email" value="${esc(m.email)}"><input type="hidden" name="action" value="remove"><button class="link-btn" type="submit">Remove</button></form>`
-              : '<span class="tag">Member</span>'
+              ? `<form method="post" action="/members"><input type="hidden" name="email" value="${esc(m.email)}"><input type="hidden" name="action" value="remove"><button class="ghost" type="submit">Remove</button></form>`
+              : '<span class="chip">Member</span>'
         }</li>`,
     )
     .join("");
   const add = viewer.owner
-    ? `<form method="post" action="/members" class="inline"><input name="email" type="email" required placeholder="name@your-studio.com" aria-label="Email to add"><input type="hidden" name="action" value="add"><button type="submit">Add</button></form>${error ? `<p class="err">${esc(error)}</p>` : ""}`
-    : "<p>Owners (STUDIO_EMAILS) add and remove members.</p>";
+    ? `<div class="panel-add"><form method="post" action="/members" class="inline"><input name="email" type="email" required placeholder="name@your-studio.com" aria-label="Email to add"><input type="hidden" name="action" value="add"><button type="submit">Add member</button></form>${error ? `<p class="err" style="margin-top:8px">${esc(error)}</p>` : ""}</div>`
+    : "";
   return page(
     env,
-    "Studio members",
-    `<div class="stack"><p>Members see every link and sign in with their email. Owners are set in the site's settings.</p>${add}</div><ul class="rows">${rows}</ul><p class="alt"><a href="/links">Links</a> · ${esc(viewer.email)} ${signOutForm("/signin")}</p>`,
+    "Members",
+    `<div class="head"><div><h1>Members <span class="n">${list.length}</span></h1><p>Members see every link and sign in with their email. Owners are set in the site's settings${viewer.owner ? "" : " and add or remove members"}.</p></div></div>
+<div class="panel" style="max-width:720px">${add}<ul class="rows">${rows}</ul></div>`,
     200,
     {},
-    { wide: true },
+    { app: { email: viewer.email, active: "members" } },
   );
 }
 
-const ACCESS_LABEL = { invited: "Invited people", password: "Password", public: "Anyone with the link" } as const;
+const ACCESS = {
+  invited: { label: "Invited people", icon: "users" },
+  password: { label: "Password", icon: "lock" },
+  public: { label: "Anyone with the link", icon: "globe" },
+} as const;
 
 /** "3 days ago", for the links page. */
 function since(t: number) {
@@ -205,31 +212,81 @@ async function links(req: Request, env: ReviewEnv): Promise<Response> {
   const viewer = await studioOnly(req, env);
   if (viewer instanceof Response) return viewer;
   const shares = await listShares(env);
-  // per link: open comments and the latest version, in two queries
+  // per link: open comments, and the latest version with its frames (for the preview)
   const [open, latest] = await Promise.all([
     env.DB.prepare("SELECT slug, COUNT(*) AS n FROM threads WHERE resolved = 0 GROUP BY slug").all<{ slug: string; n: number }>(),
-    env.DB.prepare("SELECT slug, MAX(created_at) AS at, COUNT(*) AS n FROM versions GROUP BY slug").all<{ slug: string; at: number; n: number }>(),
+    env.DB.prepare(
+      "SELECT v.slug, v.id, v.frames, v.created_at AS at, m.n FROM versions v JOIN (SELECT slug, MAX(created_at) AS at, COUNT(*) AS n FROM versions GROUP BY slug) m ON m.slug = v.slug AND m.at = v.created_at",
+    ).all<{ slug: string; id: string; frames: string; at: number; n: number }>(),
   ]);
   const openBy = new Map(open.results.map((r) => [r.slug, r.n]));
   const latestBy = new Map(latest.results.map((r) => [r.slug, r]));
   // the most recently updated first
   shares.sort((a, b) => (latestBy.get(b.slug)?.at ?? b.createdAt) - (latestBy.get(a.slug)?.at ?? a.createdAt));
-  const rows = await Promise.all(
+  const cards = await Promise.all(
     shares.map(async (s) => {
       const invites = s.access === "invited" ? await listInvites(env, s.slug) : [];
-      const who = s.access === "invited" ? (invites.length ? invites.map((i) => esc(i.email)).join(", ") : "Nobody invited yet") : ACCESS_LABEL[s.access];
       const v = latestBy.get(s.slug);
-      const updated = v ? `${v.n} version${v.n === 1 ? "" : "s"}, latest ${since(v.at)}` : "No versions";
+      let preview = "";
+      try {
+        const frames = v ? (JSON.parse(v.frames) as { name: string; image: string; route?: string }[]) : [];
+        // a page frame if there is one: it's what the client opens
+        const f = frames.find((x) => x.route) ?? frames[0];
+        if (f && v) preview = `/s/${s.slug}/v/${v.id}/${f.image}`;
+      } catch {
+        /* no preview */
+      }
+      const access = ACCESS[s.access];
+      const who =
+        s.access === "invited"
+          ? invites.length
+            ? `<span class="chip" title="${esc(invites.map((i) => i.email).join(", "))}">${icon("users", 12)} ${invites.length === 1 ? esc(invites[0].email) : `${invites.length} people`}</span>`
+            : `<span class="chip off">${icon("users", 12)} Nobody invited yet</span>`
+          : `<span class="chip">${icon(access.icon, 12)} ${access.label}</span>`;
       const comments = openBy.get(s.slug) ?? 0;
-      return `<li><span><a href="/s/${esc(s.slug)}">${esc(s.title)}</a><br><span class="sub">${esc(s.project)} / ${esc(s.canvas)} · ${updated} · ${who}</span></span><span class="tags">${comments ? `<span class="tag hot">${comments} open comment${comments === 1 ? "" : "s"}</span>` : ""}<span class="tag">${s.revoked ? "Revoked" : ACCESS_LABEL[s.access]}</span></span></li>`;
+      const url = new URL(`/s/${s.slug}`, req.url).href;
+      const search = `${s.title} ${s.project} ${s.canvas} ${invites.map((i) => i.email).join(" ")}`.toLowerCase();
+      return `<a class="card${s.revoked ? " revoked" : ""}" href="/s/${esc(s.slug)}" data-search="${esc(search)}">
+  <div class="thumb">${preview ? `<img alt="" loading="lazy" decoding="async" src="${esc(preview)}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'none',textContent:'No preview'}))">` : `<span class="none">No versions yet</span>`}
+    <button class="copy" type="button" data-url="${esc(url)}" aria-label="Copy link" title="Copy link">${icon("copy")}</button></div>
+  <div class="body"><span class="title">${esc(s.title)}</span><span class="sub">${esc(s.project)} / ${esc(s.canvas)}${v ? ` · ${v.n} version${v.n === 1 ? "" : "s"} · ${since(v.at)}` : ""}</span>
+    <span class="chips">${comments ? `<span class="chip hot">${icon("message", 12)} ${comments} open comment${comments === 1 ? "" : "s"}</span>` : ""}${s.revoked ? '<span class="chip off">Revoked</span>' : who}</span></div>
+</a>`;
     }),
   );
+  const script = `<script>
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".copy");
+  if (!b) return;
+  e.preventDefault();
+  navigator.clipboard.writeText(b.dataset.url).then(() => {
+    const was = b.innerHTML;
+    b.classList.add("done");
+    b.innerHTML = ${JSON.stringify(icon("check"))};
+    setTimeout(() => { b.classList.remove("done"); b.innerHTML = was; }, 1400);
+  });
+});
+const q = document.getElementById("q");
+if (q) q.addEventListener("input", () => {
+  const t = q.value.trim().toLowerCase();
+  let shown = 0;
+  for (const c of document.querySelectorAll(".card")) { const hit = !t || c.dataset.search.includes(t); c.classList.toggle("hidden", !hit); shown += hit; }
+  document.getElementById("none").classList.toggle("hidden", shown > 0);
+});
+</script>`;
   return page(
     env,
     "Links",
-    `<p>Every link shared from Truecanvas, the most recently updated first. Invite people from the editor's Share dialog, or <code>npx truecanvas share &lt;canvas&gt; --invite name@client.com</code>.</p><ul class="rows">${rows.join("") || "<li>No links yet.</li>"}</ul><p class="alt"><a href="/members">Members</a> · ${esc(viewer.email)} ${signOutForm("/signin")}</p>`,
+    `<div class="head"><div><h1>Links <span class="n">${shares.length}</span></h1><p>Every page shared from Truecanvas, the most recently updated first.</p></div>${
+      shares.length ? `<label class="search">${icon("search")}<input id="q" type="search" placeholder="Search links or people" aria-label="Search links"></label>` : ""
+    }</div>
+${
+  shares.length
+    ? `<div class="grid">${cards.join("")}</div><p id="none" class="empty hidden">No link matches.</p>`
+    : `<div class="empty"><b>No links yet</b><span>Share a page from Truecanvas (the Share button, or <code>npx truecanvas share home</code>): it shows up here.</span></div>`
+}${script}`,
     200,
     {},
-    { wide: true },
+    { app: { email: viewer.email, active: "links" } },
   );
 }
