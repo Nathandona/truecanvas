@@ -1,7 +1,7 @@
 {
   "name": "truecanvas-desktop",
   "productName": "Truecanvas",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Truecanvas as a desktop app: the projects window in the tray, dev servers started on demand, notifications and automatic updates.",
   "homepage": "https://github.com/Nathandona/truecanvas",
