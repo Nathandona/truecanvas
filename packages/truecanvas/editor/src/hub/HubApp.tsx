@@ -22,6 +22,7 @@ import {
   X,
   Download,
   Info,
+  MessageSquare,
 } from "lucide-react";
 import { Menu } from "../components/Menu";
 import { Tip } from "../components/controls";
@@ -33,6 +34,8 @@ interface Project {
   next: boolean;
   ready: boolean;
   canvases: number;
+  /** open threads clients started on share links */
+  clientComments?: number;
   exists: boolean;
   running: { status: "starting" | "ready" | "failed"; editor: string; app: string; error?: string; memory: number | null } | null;
 }
@@ -249,6 +252,7 @@ export function HubApp() {
           ))}
         </div>
         <div className="tabbar-right">
+          <UpdatePill />
           {memory > 0 && (
             <Tip label="Memory used by open projects (app + Truecanvas)" side="bottom">
               <span className="mem-chip">
@@ -306,8 +310,41 @@ function ProjectIcon({ path: dir, size = 14 }: { path: string; size?: number }) 
 }
 
 /* the desktop app's bridge (preload.ts): absent in a browser */
-type DesktopBridge = { version: string; checkForUpdates?: () => Promise<string> };
+type UpdateInfo = { state: string; version?: string; percent?: number };
+type DesktopBridge = {
+  version: string;
+  checkForUpdates?: () => Promise<string>;
+  updateState?: () => Promise<UpdateInfo>;
+  onUpdate?: (cb: (u: UpdateInfo) => void) => () => void;
+  restartToUpdate?: () => Promise<void>;
+};
 const desktop = (window as unknown as { truecanvasDesktop?: DesktopBridge }).truecanvasDesktop;
+
+/** A new version, downloaded in the background: one click restarts into it. */
+function UpdatePill() {
+  const [u, setU] = useState<UpdateInfo | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  useEffect(() => {
+    if (!desktop?.updateState || !desktop.onUpdate) return;
+    void desktop.updateState().then(setU);
+    return desktop.onUpdate(setU);
+  }, []);
+  if (!u || u.state !== "ready" || !desktop?.restartToUpdate) return null;
+  return (
+    <Tip label="Restarts Truecanvas and the apps it runs. Your files are saved as you edit." side="bottom">
+      <button
+        className="update-pill"
+        disabled={restarting}
+        onClick={() => {
+          setRestarting(true);
+          void desktop!.restartToUpdate!();
+        }}
+      >
+        <Download size={12} /> {restarting ? "Restarting…" : `Restart to update to ${u.version}`}
+      </button>
+    </Tip>
+  );
+}
 
 function AppMenu({ version, onQuit }: { version?: string; onQuit: () => void }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -507,6 +544,11 @@ function Dashboard({ state, onOpen, refresh }: { state: HubState; onOpen: (p: { 
                     <span className="faint">
                       {p.canvases} {p.canvases === 1 ? "page" : "pages"} · {ago(p.lastOpened, "long")}
                     </span>
+                    {(p.clientComments ?? 0) > 0 && (
+                      <span className="client-tag" title="Open comments from clients on share links">
+                        <MessageSquare size={11} /> {p.clientComments}
+                      </span>
+                    )}
                     {p.running && (
                       <span className="live-tag">
                         <span className="live-dot" /> {p.running.memory ? `${p.running.memory} MB` : "open"}

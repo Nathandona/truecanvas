@@ -56,7 +56,9 @@ export type ServerEvent =
   | { type: "comments"; canvas: string }
   | { type: "git" }
   | { type: "session"; session: SessionState }
-  | { type: "room"; canvas: string; event: RoomEvent };
+  | { type: "room"; canvas: string; event: RoomEvent }
+  /** a client commented on a share link */
+  | { type: "client-comment"; canvas: string; name: string; text: string };
 
 /** Someone in a share link's room, during a live session. */
 export interface RoomPerson {
@@ -150,22 +152,40 @@ export interface ShareResult {
     /** who can open the link (review sites with sign-in) */
     access: ShareAccess | null;
     invited: { email: string; error?: string }[];
+    /** the version's real site, when it has one */
+    live?: string | null;
   } | null;
+  /** why the real site couldn't be built (the version has frozen frames only) */
+  realSiteError?: string | null;
 }
 
 export type ShareAccess = "invited" | "password" | "public";
+
+/** A canvas's link as it is now. */
+export interface LinkInfo {
+  url: string;
+  title: string;
+  access: ShareAccess | null;
+  password: boolean;
+  versions: number;
+  updatedAt: number | null;
+  /** the latest version has the real site */
+  live: boolean;
+}
 
 export const api = {
   state: () => call<ServerState>("/api/state"),
   canvas: (name: string) => call<{ doc: CanvasDoc; history: { undo: number; redo: number } }>(`/api/canvas?name=${encodeURIComponent(name)}`),
   components: () => call<{ components: ComponentSpec[] }>("/api/components"),
   libraries: () => call<LibraryState>("/api/libraries"),
-  shareStatus: () => call<{ site: string | null; features: string[] }>("/api/share/status"),
+  shareStatus: () => call<{ site: string | null; features: string[]; realSite?: boolean }>("/api/share/status"),
+  shareLink: (canvas: string) => call<{ link: LinkInfo | null }>(`/api/share/link?canvas=${encodeURIComponent(canvas)}`),
+  shareProgress: () => call<{ step: string | null }>("/api/share/progress"),
   sessions: () => call<{ sessions: SessionState[] }>("/api/session"),
   startSession: (canvas: string) => call<{ session: SessionState }>("/api/session/start", { canvas }),
   stopSession: (canvas: string) => call<{ stopped: boolean }>("/api/session/stop", { canvas }),
   sessionCursor: (canvas: string, x: number | null, y: number | null) => call<{ ok: true }>("/api/session/cursor", { canvas, x, y }),
-  share: (body: { canvas: string; title?: string; password?: string; local?: boolean; access?: ShareAccess; invite?: string[] }) => call<ShareResult>("/api/share/snapshot", body),
+  share: (body: { canvas: string; title?: string; password?: string; local?: boolean; access?: ShareAccess; invite?: string[]; realSite?: boolean }) => call<ShareResult>("/api/share/snapshot", body),
   shadcnRegistry: () => call<{ names: string[]; offline: boolean; status: ShadcnStatus }>("/api/libraries/shadcn"),
   icons: (library: string, q: string, limit = 240) => call<{ total: number; icons: { name: string; svg: string }[] }>(`/api/icons?library=${encodeURIComponent(library)}&q=${encodeURIComponent(q)}&limit=${limit}`),
   installIcons: (id: string) => call<{ ok: boolean; out: string; package: string; state: LibraryState }>("/api/libraries/icons", { id }),

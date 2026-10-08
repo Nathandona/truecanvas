@@ -258,6 +258,8 @@ function getUpdater(): Promise<Updater | null> {
       const set = (u: UpdateState) => {
         update = u;
         void buildTrayMenu();
+        // the window shows it too (not every desktop shows tray icons)
+        win?.webContents.send("truecanvas:update", update);
       };
       autoUpdater.on("checking-for-update", () => set({ state: "checking" }));
       autoUpdater.on("update-not-available", () => {
@@ -271,7 +273,7 @@ function getUpdater(): Promise<Updater | null> {
       });
       autoUpdater.on("update-downloaded", (info) => {
         set({ state: "ready", version: info.version });
-        say(`Truecanvas ${info.version} is ready`, "Restart from the tray menu to update, or it installs when you quit.");
+        say(`Truecanvas ${info.version} is ready`, "Click Restart to update in the Truecanvas window, or it installs when you quit.");
         askedForUpdate = false;
       });
       autoUpdater.on("error", (err) => {
@@ -297,7 +299,7 @@ function checkForUpdates(asked = false) {
   }
   if (update.state === "checking" || update.state === "downloading") return;
   if (update.state === "ready") {
-    if (asked) say(`Truecanvas ${update.version} is ready`, "Restart from the tray menu to update.");
+    if (asked) say(`Truecanvas ${update.version} is ready`, "Click Restart to update in the Truecanvas window.");
     return;
   }
   askedForUpdate = asked;
@@ -366,6 +368,8 @@ async function main() {
   }
   log("ready", { origin, attach, port });
 
+  ipcMain.handle("truecanvas:update-state", () => update);
+  ipcMain.handle("truecanvas:restart-to-update", () => restartToUpdate());
   ipcMain.handle("truecanvas:check-updates", () => {
     checkForUpdates(true);
     return update.state;

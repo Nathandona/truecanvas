@@ -1,6 +1,6 @@
 # Share links: technical design
 
-Status: milestones 1 to 3 built (2026-10-07), live at review.altair-studio.com. First user: Altair studio, sharing designs with clients on the studio's own domain. Live sites and the Cloudflare review site (`packages/review-worker`) built locally, not deployed yet.
+Status: milestones 1 to 3 built (2026-10-07), live at review.altair-studio.com on the Cloudflare review site (`packages/review-worker`). First user: Altair studio, sharing designs with clients on the studio's own domain. The real site is built and included on Share since 2026-10-08.
 
 ## Goal
 
@@ -87,14 +87,16 @@ Snapshots make sharing safe, but a page that fetches data needs data to render. 
    ```
 3. **The real API:** for local work only. Share warns when a frame made network requests to anything but the dev server while it was being snapshotted.
 
-## Live sites ("View live")
+## The real site
 
-Frozen frames can't show motion or interaction, so a version can also carry a live site:
+Frozen frames can't show motion or interaction, so a version also carries the real site:
 
+- **Built on Share, by default** (`share/export.ts`): Next.js projects are copied (without node_modules, the generated canvas route, the canvases, API routes and middleware) into `.truecanvas/live-export` inside the project, so its node_modules resolve and the dev server keeps running, then built with the project's own `next.config` wrapped to `output: "export"` and unoptimized images, types unchecked. Vite projects run `vite build` into `node_modules/.cache`. A build that fails leaves the version with frozen frames, and the Share dialog says why. `--frozen` (CLI) or `frozen` (MCP) leaves it out.
+- **Stored by content**: the version gets a manifest of path to SHA-256, files go once per link under `blobs/<hash>`, so sharing again only uploads what changed (a Next build keeps its hashed chunks). Uploads travel several files per request (`POST files/batch`).
 - **A static build** (`truecanvas share --live out/`): uploaded with the version and hosted by the review site on a host of its own, `<link key>-<version><LIVE_HOST_SUFFIX>` (e.g. `ab12cd34ef-20261007153000-live.example.com`). A separate origin keeps the site's scripts away from the review site's cookies and API. One level under the domain, because the free certificate only covers first-level subdomains.
 - **A URL** (`--live https://...`): where the app already runs, for apps with a server.
 - **Access:** when the link has a password, the manifest carries a short-lived signed token; the live host trades it for an HttpOnly cookie, so the live site is protected like the link.
-- **Viewer:** each frame gets **View live**: the site in an iframe at the frame's width and a real screen height (900 desktop, 1024 tablet, 844 phone), scaled to fit, scrollable inside, with "Open in a new tab". Comments stay on the frozen frames.
+- **Viewer:** page frames load their page from the real site (the frozen copy shows until it loads); a click lets the client interact with it, and **Full screen** opens it at a real screen height (900 desktop, 1024 tablet, 844 phone), scaled to fit, with "Open in a new tab".
 - **Compatibility:** the review site lists `features` in its token check; Truecanvas checks them before uploading, so an older site fails with a clear message.
 
 ## Two review sites

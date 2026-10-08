@@ -25,7 +25,8 @@ import { addShadcnComponents, installIconLibrary, libraryState, shadcnRegistry }
 import { loadIcons, searchIcons } from "../core/icons.js";
 import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
-import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
+import { linkInfo, parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
+import { canExport, exportSite } from "../share/export.js";
 import { CommentSync } from "../share/sync.js";
 import { Sessions } from "../share/session.js";
 import { assertCanvasName } from "../core/scaffold.js";
@@ -48,6 +49,8 @@ const MIME: Record<string, string> = {
 };
 
 export async function startServer(ws: Workspace) {
+  /** What Share is doing right now, shown as the dialog's progress. */
+  let shareStep: string | null = null;
   const { config } = ws;
   const editorDir = fileURLToPath(new URL("./editor/", import.meta.url));
   const shots = new Screenshotter(config.appUrl);
@@ -56,13 +59,15 @@ export async function startServer(ws: Workspace) {
   // client comments on share links, both ways
   // the Truecanvas window (hub) that started this project hears about them, to notify the studio
   const hub = process.env.TRUECANVAS_HUB_URL;
-  const commentSync = new CommentSync(
-    ws,
-    hub
-      ? (e) =>
-          void fetch(`${hub}/api/hub/notify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: config.root, ...e }), signal: AbortSignal.timeout(5000) }).catch(() => {})
-      : undefined,
-  );
+  // editors open on this project (server-sent events), filled in below
+  const clients = new Set<http.ServerResponse>();
+  const commentSync = new CommentSync(ws, (e) => {
+    // the editor says it in place; the desktop app also shows a notification
+    const data = `data: ${JSON.stringify({ type: "client-comment", ...e })}\n\n`;
+    for (const res of clients) res.write(data);
+    if (hub)
+      void fetch(`${hub}/api/hub/notify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: config.root, ...e }), signal: AbortSignal.timeout(5000) }).catch(() => {});
+  });
   commentSync.start();
   // keep the preview registry in sync with the component catalog
   const syncRegistry = () =>
@@ -76,7 +81,6 @@ export async function startServer(ws: Workspace) {
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.port}`]);
 
   // ---------- live events (SSE) ----------
-  const clients = new Set<http.ServerResponse>();
   const broadcast = (e: WorkspaceEvent) => {
     const data = `data: ${JSON.stringify(e)}\n\n`;
     for (const res of clients) res.write(data);
@@ -449,11 +453,20 @@ export async function startServer(ws: Workspace) {
         const site = reviewSite();
         // what the site can do (invitations need sign-in): offline or an older site, nothing extra
         const features = site ? await siteFeatures(site).catch(() => []) : [];
-        return json(res, 200, { site: site ? site.url : null, features });
+        return json(res, 200, { site: site ? site.url : null, features, realSite: canExport(config) && features.includes("live-files") });
       }
+      case "GET /api/share/link": {
+        // the canvas's link as it is now, for the Share dialog (null: never shared, or no review site)
+        const canvas = url.searchParams.get("canvas") ?? "";
+        assertCanvasName(canvas);
+        const site = reviewSite();
+        return json(res, 200, { link: site ? await linkInfo(site, path.basename(config.root), canvas).catch(() => null) : null });
+      }
+      case "GET /api/share/progress":
+        return json(res, 200, { step: shareStep });
       case "POST /api/share/snapshot": {
         // local: a preview only. Otherwise published to the studio's review site when one is set up.
-        const { canvas, frames, local, title, password, live, access, invite } = (await readJson(req)) as {
+        const { canvas, frames, local, title, password, live, access, invite, realSite } = (await readJson(req)) as {
           canvas: string;
           frames?: string[];
           local?: boolean;
@@ -462,14 +475,36 @@ export async function startServer(ws: Workspace) {
           live?: LiveSite;
           access?: Access;
           invite?: string[];
+          /** build the app as a static site so clients get the real pages (default: when the review site hosts them) */
+          realSite?: boolean;
         };
         assertCanvasName(canvas);
-        const { dir, manifest } = await createSnapshot(ws, shots, canvas, { frames });
-        const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
         const site = local ? null : reviewSite();
-        const published = site ? await publishSnapshot(site, dir, manifest, { title, password, live, access, invite: invite?.length ? parseEmails(invite) : undefined }) : null;
-        if (published) commentSync.forget(canvas);
-        return json(res, 200, { manifest, preview, published });
+        let built: Awaited<ReturnType<typeof exportSite>> | null = null;
+        // why the real site isn't in this version, when it couldn't be built
+        let realSiteError: string | null = null;
+        try {
+          shareStep = "Rendering every frame through your app";
+          const { dir, manifest } = await createSnapshot(ws, shots, canvas, { frames });
+          const preview = `${origin}/share/${encodeURIComponent(canvas)}/${manifest.id}/`;
+          let liveSite = live;
+          if (site && !live && realSite !== false && canExport(config) && (await siteFeatures(site).catch((): string[] => [])).includes("live-files")) {
+            shareStep = "Building the real site";
+            try {
+              built = await exportSite(config);
+              liveSite = { dir: built.dir };
+            } catch (err) {
+              realSiteError = (err as Error).message;
+            }
+          }
+          if (site) shareStep = `Uploading to ${site.url.replace(/^https?:\/\//, "")}`;
+          const published = site ? await publishSnapshot(site, dir, manifest, { title, password, live: liveSite, access, invite: invite?.length ? parseEmails(invite) : undefined }) : null;
+          if (published) commentSync.forget(canvas);
+          return json(res, 200, { manifest, preview, published, realSiteError });
+        } finally {
+          built?.cleanup();
+          shareStep = null;
+        }
       }
       // live sessions: clients follow the canvas live on its link (editor button, CLI, MCP, desktop tray)
       case "GET /api/session":

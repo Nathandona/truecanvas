@@ -91,6 +91,13 @@ export async function getShare(env: ReviewEnv, slug: string): Promise<Share | nu
   return withVersions(env, await env.DB.prepare("SELECT * FROM shares WHERE slug = ?").bind(slug).first<ShareRow>());
 }
 
+/** A share without its versions: one query, for uploads. */
+export async function getShareLite(env: ReviewEnv, slug: string): Promise<Share | null> {
+  if (!/^[a-z0-9-]{8,120}$/.test(slug)) return null;
+  const row = await env.DB.prepare("SELECT * FROM shares WHERE slug = ?").bind(slug).first<ShareRow>();
+  return row ? toShare(row, []) : null;
+}
+
 /** The share whose live sites are named by `key` (the slug's random tail). */
 export async function getShareByKey(env: ReviewEnv, key: string): Promise<Share | null> {
   return withVersions(env, await env.DB.prepare("SELECT * FROM shares WHERE key = ?").bind(key).first<ShareRow>());
@@ -168,6 +175,10 @@ export async function rememberAsset(env: ReviewEnv, slug: string, name: string) 
   await env.DB.prepare("INSERT OR IGNORE INTO assets (slug, name) VALUES (?, ?)").bind(slug, name).run();
 }
 
+export async function rememberAssets(env: ReviewEnv, slug: string, names: string[]) {
+  if (names.length) await env.DB.batch(names.map((name) => env.DB.prepare("INSERT OR IGNORE INTO assets (slug, name) VALUES (?, ?)").bind(slug, name)));
+}
+
 /** R2 key of a snapshot file inside a share, or null for anything else. */
 export function filePath(slug: string, file: string): string | null {
   const asset = /^assets\/([a-f0-9]{8,64}\.[a-z0-9]{1,5})$/.exec(file);
@@ -183,6 +194,43 @@ export function livePath(slug: string, version: string, file: string): string | 
   const clean = file.replace(/^\/+/, "");
   if (!clean || clean.length > 400 || /(^|\/)\.\.?(\/|$)/.test(clean) || /[\\\0]/.test(clean)) return null;
   return `shares/${slug}/live/${version}/${clean}`;
+}
+
+/*
+ * Live sites stored by content: each file once per link under blobs/<sha-256>,
+ * and per version a manifest of path -> hash. Sharing again only uploads the
+ * files that changed (a Next build mostly keeps its hashed chunks).
+ */
+export const liveManifestKey = (slug: string, version: string) => `shares/${slug}/live/${version}/.truecanvas-manifest.json`;
+export const blobKey = (slug: string, hash: string) => `shares/${slug}/blobs/${hash}`;
+export type LiveManifest = Record<string, string>;
+
+/** The hashes this link already stores. */
+export async function knownBlobs(env: ReviewEnv, slug: string): Promise<Set<string>> {
+  const known = new Set<string>();
+  const prefix = `shares/${slug}/blobs/`;
+  let cursor: string | undefined;
+  do {
+    const page = await env.FILES.list({ prefix, cursor, limit: 1000 });
+    for (const o of page.objects) known.add(o.key.slice(prefix.length));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return known;
+}
+
+const manifests = new Map<string, LiveManifest | null>();
+/** A version's live manifest (null: the version stores its files by path, as before). */
+export async function liveManifest(env: ReviewEnv, slug: string, version: string): Promise<LiveManifest | null> {
+  const key = liveManifestKey(slug, version);
+  if (manifests.has(key)) return manifests.get(key)!;
+  const object = await env.FILES.get(key);
+  const manifest = object ? ((await object.json()) as LiveManifest) : null;
+  // only found manifests are kept: one may be uploaded right after a miss
+  if (manifest) {
+    if (manifests.size > 50) manifests.delete(manifests.keys().next().value!);
+    manifests.set(key, manifest);
+  }
+  return manifest;
 }
 
 export async function deletePrefix(env: ReviewEnv, prefix: string) {

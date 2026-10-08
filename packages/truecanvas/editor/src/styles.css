@@ -3998,3 +3998,141 @@ details.advanced summary::-webkit-details-marker {
   font-size: 11px;
   padding: 6px 12px 0;
 }
+
+/* ---------- share dialog ---------- */
+.share-current {
+  margin: 4px 0 14px;
+}
+.share-current .share-note {
+  margin: 0;
+}
+.share-option {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  border-radius: var(--radius);
+  background: var(--field);
+  cursor: pointer;
+}
+.share-option-icon {
+  margin-top: 1px;
+  color: var(--text-2);
+}
+.share-option b {
+  display: block;
+  font-weight: 550;
+  margin-bottom: 2px;
+}
+.share-option .faint {
+  display: block;
+  font-size: 11.5px;
+  line-height: 16px;
+}
+.share-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.share-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 0 8px;
+}
+.share-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-3, var(--text-2));
+}
+.share-step.now {
+  color: var(--text);
+}
+.share-step.done {
+  color: var(--text-2);
+}
+.share-step.done svg {
+  color: var(--success, #16a34a);
+}
+.share-step-dot {
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+}
+.share-step-dot::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+.share-step-time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.share-warn-box {
+  margin: 0 0 10px;
+  color: var(--warning, #b45309);
+}
+.share-warn-box summary {
+  cursor: pointer;
+}
+.share-warn-box pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: var(--radius);
+  background: var(--field);
+  color: var(--text-2);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.nowrap {
+  white-space: nowrap;
+}
+
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: transform 0.12s cubic-bezier(0.23, 1, 0.32, 1), filter 0.15s ease;
+}
+.update-pill:hover {
+  filter: brightness(1.06);
+}
+.update-pill:active {
+  transform: scale(0.97);
+}
+.update-pill:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+.client-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(234, 106, 60, 0.12);
+  color: #d4572b;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

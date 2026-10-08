@@ -50,6 +50,8 @@ a { color:inherit; }
 .rows { list-style:none; margin:16px 0 0; padding:0; border-top:1px solid var(--line); }
 .rows li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
 .rows .sub { color:var(--muted); font-size:13px; }
+.rows .tags { display:flex; gap:6px; flex:none; }
+.tag.hot { background:rgba(234,106,60,.12); color:#c2410c; }
 .tag { font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; white-space:nowrap; }
 .inline { flex-direction:row; }
 .inline input { flex:1; min-width:0; }

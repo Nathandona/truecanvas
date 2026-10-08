@@ -50,7 +50,7 @@ export function signInPage(env: ReviewEnv, req: Request, opts: { next?: string |
     esc(opts.title ?? "Sign in"),
     `<form method="post" action="/signin">
       <label for="email">${esc(opts.intro ?? "Enter your email: we'll send you a link to sign in. No password needed.")}</label>
-      <input id="email" name="email" type="email" autocomplete="email" autofocus required value="${esc(opts.email ?? "")}" ${opts.error ? 'aria-invalid="true" aria-describedby="err"' : ""}>
+      <input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" autofocus required value="${esc(opts.email ?? "")}" ${opts.error ? 'aria-invalid="true" aria-describedby="err"' : ""}>
       <input type="hidden" name="next" value="${esc(next)}">
       ${opts.error ? '<p id="err" class="err">That sign-in link has expired or was already used. Ask for a new one.</p>' : ""}
       <button type="submit">Email me a sign-in link</button>
@@ -190,21 +190,44 @@ async function members(req: Request, env: ReviewEnv): Promise<Response> {
 
 const ACCESS_LABEL = { invited: "Invited people", password: "Password", public: "Anyone with the link" } as const;
 
+/** "3 days ago", for the links page. */
+function since(t: number) {
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(t).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" });
+}
+
 async function links(req: Request, env: ReviewEnv): Promise<Response> {
   const viewer = await studioOnly(req, env);
   if (viewer instanceof Response) return viewer;
   const shares = await listShares(env);
+  // per link: open comments and the latest version, in two queries
+  const [open, latest] = await Promise.all([
+    env.DB.prepare("SELECT slug, COUNT(*) AS n FROM threads WHERE resolved = 0 GROUP BY slug").all<{ slug: string; n: number }>(),
+    env.DB.prepare("SELECT slug, MAX(created_at) AS at, COUNT(*) AS n FROM versions GROUP BY slug").all<{ slug: string; at: number; n: number }>(),
+  ]);
+  const openBy = new Map(open.results.map((r) => [r.slug, r.n]));
+  const latestBy = new Map(latest.results.map((r) => [r.slug, r]));
+  // the most recently updated first
+  shares.sort((a, b) => (latestBy.get(b.slug)?.at ?? b.createdAt) - (latestBy.get(a.slug)?.at ?? a.createdAt));
   const rows = await Promise.all(
     shares.map(async (s) => {
       const invites = s.access === "invited" ? await listInvites(env, s.slug) : [];
       const who = s.access === "invited" ? (invites.length ? invites.map((i) => esc(i.email)).join(", ") : "Nobody invited yet") : ACCESS_LABEL[s.access];
-      return `<li><span><a href="/s/${esc(s.slug)}">${esc(s.title)}</a><br><span class="sub">${esc(s.project)} / ${esc(s.canvas)} · ${who}</span></span><span class="tag">${s.revoked ? "Revoked" : ACCESS_LABEL[s.access]}</span></li>`;
+      const v = latestBy.get(s.slug);
+      const updated = v ? `${v.n} version${v.n === 1 ? "" : "s"}, latest ${since(v.at)}` : "No versions";
+      const comments = openBy.get(s.slug) ?? 0;
+      return `<li><span><a href="/s/${esc(s.slug)}">${esc(s.title)}</a><br><span class="sub">${esc(s.project)} / ${esc(s.canvas)} · ${updated} · ${who}</span></span><span class="tags">${comments ? `<span class="tag hot">${comments} open comment${comments === 1 ? "" : "s"}</span>` : ""}<span class="tag">${s.revoked ? "Revoked" : ACCESS_LABEL[s.access]}</span></span></li>`;
     }),
   );
   return page(
     env,
     "Links",
-    `<p>Every link shared from Truecanvas. Invite people with <code>npx truecanvas share &lt;canvas&gt; --invite name@client.com</code>.</p><ul class="rows">${rows.join("") || "<li>No links yet.</li>"}</ul><p class="alt"><a href="/members">Members</a> · ${esc(viewer.email)} ${signOutForm("/signin")}</p>`,
+    `<p>Every link shared from Truecanvas, the most recently updated first. Invite people from the editor's Share dialog, or <code>npx truecanvas share &lt;canvas&gt; --invite name@client.com</code>.</p><ul class="rows">${rows.join("") || "<li>No links yet.</li>"}</ul><p class="alt"><a href="/members">Members</a> · ${esc(viewer.email)} ${signOutForm("/signin")}</p>`,
     200,
     {},
     { wide: true },

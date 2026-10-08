@@ -70,10 +70,17 @@ export function Overlay({
         const b = frameScreen(f);
         const selected = selection.includes(f.id);
         return (
-          <div key={f.id} className={`frame-label${selected ? " selected" : ""}`} style={{ left: b.left, top: b.top - 20, maxWidth: Math.max(40, b.width) }} onPointerDown={(e) => onLabelDown(f, e)}>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.frameName}</span>
+          <div
+            key={f.id}
+            className={`frame-label${selected ? " selected" : ""}`}
+            style={{ left: b.left, top: b.top - 20, maxWidth: Math.max(40, b.width) }}
+            title={f.device ? `${f.frameName} · ${findDevice(f.device)?.name ?? f.device}` : f.frameName}
+            onPointerDown={(e) => onLabelDown(f, e)}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 24 }}>{f.frameName}</span>
             {f.theme && <span className="theme-tag">{f.theme === "dark" ? <Moon size={11} /> : <Sun size={11} />}</span>}
-            {f.device && <span className="theme-tag">{findDevice(f.device)?.name}</span>}
+            {/* the device name only when the frame is wide enough for both: the frame's own name comes first */}
+            {f.device && b.width >= 70 + f.frameName.length * 7 && <span className="theme-tag">{findDevice(f.device)?.name}</span>}
             {dirty.has(f.frameName) && <span className="change-dot" title="Changed since the last commit" />}
             <LinkTag frame={f} compact={b.width < 220} />
             <PlayControls frame={f} compact={b.width < 260} />

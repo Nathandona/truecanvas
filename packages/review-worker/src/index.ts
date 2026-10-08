@@ -18,16 +18,22 @@ import {
   filePath,
   findShare,
   getShare,
+  getShareLite,
+  blobKey,
   knownAssets,
+  knownBlobs,
   listThreads,
+  liveManifestKey,
   livePath,
   newId,
   putVersion,
   rememberAsset,
+  rememberAssets,
   updateShare,
   type Access,
   type CommentMessage,
   type Live,
+  type LiveManifest,
   type Share,
   type Thread,
 } from "./store";
@@ -56,7 +62,7 @@ import {
 export { Room } from "./room";
 
 /** What this site can do beyond the original API. Truecanvas checks it before using them. */
-const features = (env: ReviewEnv) => ["live-url", "room", ...(env.LIVE_HOST_SUFFIX ? ["live-files", "session"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
+const features = (env: ReviewEnv) => ["live-url", "room", "batch", ...(env.LIVE_HOST_SUFFIX ? ["live-files", "live-blobs", "session"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
 
 export default {
   async fetch(req: Request, env: ReviewEnv): Promise<Response> {
@@ -112,7 +118,9 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
     return notFound();
   }
 
-  const share = await getShare(env, parts[0]);
+  // uploads don't need the link's versions: one query instead of two
+  const light = ["PUT files", "PUT live/files", "POST live/manifest", "PUT live/blobs", "POST files/batch", "GET assets"].includes(route);
+  const share = light ? await getShareLite(env, parts[0]) : await getShare(env, parts[0]);
   if (!share) return notFound();
   // the link's room: Truecanvas joins it as the live session's host, or reads who's there
   if (parts[1] === "room" && parts.length === 2 && req.method === "GET") {
@@ -186,6 +194,66 @@ async function api(req: Request, env: ReviewEnv, parts: string[]): Promise<Respo
       if (!key) return json({ error: `Unexpected file ${file}` }, 400);
       await env.FILES.put(key, await req.arrayBuffer(), { httpMetadata: { contentType: req.headers.get("content-type") || "application/octet-stream" } });
       if (file.startsWith("assets/")) await rememberAsset(env, share.slug, file.slice("assets/".length));
+      return json({ ok: true });
+    }
+    case "POST files/batch": {
+      // many files in one request: [4-byte header length][JSON header][bodies, back to back]
+      const buf = new Uint8Array(await req.arrayBuffer());
+      if (buf.length < 4) return json({ error: "Empty batch" }, 400);
+      const headLen = new DataView(buf.buffer).getUint32(0);
+      let head: { files?: { path?: string; hash?: string; type?: string; size: number }[] };
+      try {
+        head = JSON.parse(new TextDecoder().decode(buf.subarray(4, 4 + headLen)));
+      } catch {
+        return json({ error: "Bad batch header" }, 400);
+      }
+      const items = Array.isArray(head.files) ? head.files : [];
+      if (!items.length || items.length > 200) return json({ error: "A batch has 1 to 200 files" }, 400);
+      let at = 4 + headLen;
+      const puts: { key: string; body: Uint8Array; type?: string; asset?: string }[] = [];
+      for (const item of items) {
+        const body = buf.subarray(at, at + item.size);
+        at += item.size;
+        if (body.length !== item.size) return json({ error: "The batch is shorter than its header says" }, 400);
+        if (item.hash) {
+          if (!env.LIVE_HOST_SUFFIX || !/^[a-f0-9]{64}$/.test(item.hash)) return json({ error: "Unexpected live file" }, 400);
+          const actual = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))].map((b) => b.toString(16).padStart(2, "0")).join("");
+          if (actual !== item.hash) return json({ error: "A file doesn't match its hash." }, 400);
+          puts.push({ key: blobKey(share.slug, item.hash), body });
+        } else {
+          const key = filePath(share.slug, item.path ?? "");
+          if (!key) return json({ error: `Unexpected file ${item.path}` }, 400);
+          puts.push({ key, body, type: item.type || "application/octet-stream", asset: item.path!.startsWith("assets/") ? item.path!.slice("assets/".length) : undefined });
+        }
+      }
+      for (let i = 0; i < puts.length; i += 8)
+        await Promise.all(puts.slice(i, i + 8).map((p) => env.FILES.put(p.key, p.body, p.type ? { httpMetadata: { contentType: p.type } } : undefined)));
+      await rememberAssets(env, share.slug, puts.flatMap((p) => (p.asset ? [p.asset] : [])));
+      return json({ ok: true, stored: puts.length });
+    }
+    case "POST live/manifest": {
+      // a version's live site by content: answers which files still need uploading
+      if (!env.LIVE_HOST_SUFFIX) return json({ error: "This review site doesn't host live sites (LIVE_HOST_SUFFIX isn't set)." }, 400);
+      const version = new URL(req.url).searchParams.get("version") ?? "";
+      const { files } = (await req.json().catch(() => ({}))) as { files?: Record<string, string> };
+      if (!/^\d{8}-\d{6}$/.test(version) || !files || typeof files !== "object") return json({ error: "version and files are required" }, 400);
+      const manifest: LiveManifest = {};
+      for (const [file, hash] of Object.entries(files)) {
+        if (!livePath(share.slug, version, file) || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) return json({ error: `Unexpected live file ${file}` }, 400);
+        manifest[file.replace(/^\/+/, "")] = hash;
+      }
+      const known = await knownBlobs(env, share.slug);
+      await env.FILES.put(liveManifestKey(share.slug, version), JSON.stringify(manifest), { httpMetadata: { contentType: "application/json" } });
+      return json({ ok: true, missing: [...new Set(Object.values(manifest))].filter((h) => !known.has(h)) });
+    }
+    case "PUT live/blobs": {
+      const hash = req.headers.get("x-hash") ?? "";
+      if (!/^[a-f0-9]{64}$/.test(hash)) return json({ error: "x-hash is required" }, 400);
+      const body = await req.arrayBuffer();
+      const actual = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (actual !== hash) return json({ error: "The file doesn't match its hash." }, 400);
+      // no stored type: the same bytes can serve several paths, each typed by its name
+      await env.FILES.put(blobKey(share.slug, hash), body);
       return json({ ok: true });
     }
     case "PUT live/files": {
@@ -408,7 +476,7 @@ function passwordPage(env: ReviewEnv, share: Share, wrong = false) {
     esc(share.title),
     `<form method="post" action="/s/${share.slug}/unlock">
       <label for="pw">This design is protected. Enter the password the studio gave you.</label>
-      <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required ${wrong ? 'aria-invalid="true" aria-describedby="err"' : ""}>
+      <input id="pw" name="password" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" autofocus required ${wrong ? 'aria-invalid="true" aria-describedby="err"' : ""}>
       ${wrong ? '<p id="err" class="err">That password isn\'t right.</p>' : ""}
       <button type="submit">View the design</button>
     </form>${signInOn(env) ? `<p class="alt">Invited, or from the studio? <a href="/signin?next=${encodeURIComponent(`/s/${share.slug}`)}">Sign in with your email</a></p>` : ""}`,

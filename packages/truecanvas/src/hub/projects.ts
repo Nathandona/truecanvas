@@ -14,6 +14,8 @@ export interface ProjectInfo extends ProjectRecord {
   /** truecanvas is installed */
   ready: boolean;
   canvases: number;
+  /** open threads clients started on share links: feedback waiting for the studio */
+  clientComments: number;
   exists: boolean;
 }
 
@@ -71,18 +73,29 @@ export function projectName(dir: string): string {
 
 export function inspect(dir: string): Omit<ProjectInfo, keyof ProjectRecord> {
   const pkg = readPkg(dir);
-  if (!pkg) return { next: false, ready: false, canvases: 0, exists: fs.existsSync(dir) };
+  if (!pkg) return { next: false, ready: false, canvases: 0, clientComments: 0, exists: fs.existsSync(dir) };
   const deps = { ...(pkg.dependencies as object), ...(pkg.devDependencies as object) } as Record<string, string>;
   let canvases = 0;
+  let clientComments = 0;
   for (const d of ["canvas", "src/canvas"]) {
+    let files: string[];
     try {
-      canvases += fs.readdirSync(path.join(dir, d)).filter((f) => f.endsWith(".canvas.tsx")).length;
+      files = fs.readdirSync(path.join(dir, d));
     } catch {
-      /* no canvas dir */
+      continue; // no canvas dir
+    }
+    canvases += files.filter((f) => f.endsWith(".canvas.tsx")).length;
+    for (const f of files.filter((f) => f.endsWith(".comments.json"))) {
+      try {
+        const { threads } = JSON.parse(fs.readFileSync(path.join(dir, d, f), "utf8")) as { threads?: { resolved?: boolean; messages?: { author?: { kind?: string } }[] }[] };
+        clientComments += (threads ?? []).filter((t) => !t.resolved && t.messages?.[0]?.author?.kind === "client").length;
+      } catch {
+        /* unreadable: no count */
+      }
     }
   }
   // `next`: an app Truecanvas can run in (Next.js, or Vite + React)
-  return { next: "next" in deps || ("vite" in deps && "react" in deps), ready: "truecanvas" in deps, canvases, exists: true };
+  return { next: "next" in deps || ("vite" in deps && "react" in deps), ready: "truecanvas" in deps, canvases, clientComments, exists: true };
 }
 
 /** Next.js and Vite apps in the usual code folders (a few levels deep, skipping node_modules). */

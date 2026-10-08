@@ -11,7 +11,8 @@ import { readDesignTokens } from "../core/tokens.js";
 import { DEVICES, findDevice } from "../core/devices.js";
 import type { Screenshotter } from "./screenshot.js";
 import { createSnapshot } from "../share/snapshot.js";
-import { parseEmails, publishSnapshot, reviewSite, type LiveSite } from "../share/publish.js";
+import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type LiveSite } from "../share/publish.js";
+import { canExport, exportSite } from "../share/export.js";
 import type { Sessions } from "../share/session.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
@@ -688,7 +689,8 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         live: z
           .string()
           .optional()
-          .describe("A live version clients open with \"View live\": the https URL where the app runs, or a static build folder (Next `out/`, Vite `dist/`, relative to the project) that the review site hosts."),
+          .describe("Another real site to use: the https URL where the app runs, or a static build folder (Next `out/`, Vite `dist/`, relative to the project). Usually omitted: the app is built as static pages automatically."),
+        frozen: z.boolean().optional().describe("Leave the real site out (frozen frames only). By default the app is built as static pages so clients scroll and click the actual pages."),
         invite: z
           .array(z.string())
           .optional()
@@ -700,7 +702,7 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         password: z.string().optional().describe("The link's password, with access \"password\"."),
       },
     },
-    async ({ canvas, frames, title, live, invite, access, password }) => {
+    async ({ canvas, frames, title, live, frozen, invite, access, password }) => {
       try {
         const c = resolveCanvas(canvas);
         presence(c, "looking", "Preparing a share link");
@@ -712,15 +714,26 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         ].filter(Boolean);
         const site = reviewSite();
         if (!site) return text([`✓ Snapshot ready (${manifest.frames.length} frames). No review site is set up, so this is a local preview: ${preview}`, "To get client links, the user runs `npx truecanvas share setup`.", ...notes].join("\n"));
-        const liveSite: LiveSite | undefined = live ? (/^https?:\/\//.test(live) ? { url: live } : { dir: path.resolve(ws.config.root, live) }) : undefined;
-        const published = await publishSnapshot(site, dir, manifest, { title, live: liveSite, access, password, invite: invite?.length ? parseEmails(invite) : undefined });
+        let liveSite: LiveSite | undefined = live ? (/^https?:\/\//.test(live) ? { url: live } : { dir: path.resolve(ws.config.root, live) }) : undefined;
+        // the real site: the app built as static pages, when the review site hosts them
+        let built: Awaited<ReturnType<typeof exportSite>> | null = null;
+        if (!liveSite && !frozen && canExport(ws.config) && (await siteFeatures(site).catch((): string[] => [])).includes("live-files")) {
+          presence(c, "looking", "Building the real site");
+          try {
+            built = await exportSite(ws.config);
+            liveSite = { dir: built.dir };
+          } catch (err) {
+            notes.push(`The real site couldn't be built, so this version has frozen frames only: ${(err as Error).message}`);
+          }
+        }
+        const published = await publishSnapshot(site, dir, manifest, { title, live: liveSite, access, password, invite: invite?.length ? parseEmails(invite) : undefined }).finally(() => built?.cleanup());
         const who =
           published.access === "invited" ? ", invited people only" : published.access === "public" ? ", anyone with the link" : published.password ? ", password protected" : "";
         return text(
           [
             `✓ Shared ${manifest.frames.length} frame(s): ${published.url}`,
             `Version ${published.versions} of this link${who}.`,
-            published.live ? `Live version: ${published.live}` : "",
+            published.live ? "The real site is included: clients scroll and click the actual pages." : "",
             ...published.invited.map((i) => (i.error ? `Couldn't email ${i.email}: ${i.error}` : `Invited ${i.email} (emailed a sign-in link).`)),
             published.access === "invited" && !published.invited.length ? "Only invited people and the studio can open it: share again with `invite` to invite the client." : "",
             ...notes,

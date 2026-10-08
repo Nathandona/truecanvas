@@ -1,6 +1,6 @@
 # Truecanvas review site (Cloudflare)
 
-A studio's review site for Truecanvas share links, on Cloudflare Workers with D1, R2 and Durable Objects. Clients open a link, look at the frozen frames, pin comments, open the live site with **View live**, and follow the studio's work in **live sessions**. Same API as the Vercel version in `packages/review`: Truecanvas works with either.
+A studio's review site for Truecanvas share links, on Cloudflare Workers with D1, R2 and Durable Objects. Clients open a link, look at the pages (the real site, scrollable and clickable, when the share includes it), pin comments, open a page **Full screen**, and follow the studio's work in **live sessions**. Same API as the Vercel version in `packages/review`: Truecanvas works with either.
 
 Cloudflare's free plan covers it (Workers, D1, R2 up to 10 GB) and allows commercial use.
 
@@ -72,14 +72,15 @@ Turn it on (step 3b below): sign-in needs `BETTER_AUTH_SECRET`, the owners' emai
 
 ## Live sites
 
-Share with `--live`:
+Truecanvas includes the real site in each share on its own: it builds the app as static pages (Next.js with `output: "export"` in a copy of the project, Vite with `vite build`) and uploads them with the version. Files are stored by content, so sharing again only sends what changed. To use another build or a running app instead:
 
-```sh
-npx truecanvas share home --live out/                    # a static build, hosted here
+```bash
+npx truecanvas share home --live out/                    # a static build folder, hosted here
 npx truecanvas share home --live https://preview.example.com   # where the app already runs
+npx truecanvas share home --frozen                       # frozen frames only
 ```
 
-A static build is any folder with an `index.html`: Next.js with `output: "export"` (`out/`), Vite (`dist/`). It's uploaded with the version; older versions keep theirs. Clean URLs and `404.html` work as on any static host. When the link has a password, the live site does too: the viewer hands the client a short-lived token, which the live host trades for a cookie.
+A static build is any folder with an `index.html`. Clean URLs and `404.html` work as on any static host. When the link has a password, the live site does too: the viewer hands the client a short-lived token, which the live host trades for a cookie.
 
 Agents pass the same thing to `share_canvas` as `live`.
 

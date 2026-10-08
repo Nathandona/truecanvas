@@ -3,7 +3,7 @@ import type { ReviewEnv } from "./env";
 import { notFound, page } from "./http";
 import { safePath } from "truecanvas/share";
 import { tunnel } from "./rooms";
-import { getShareByKey, livePath, type Share, type Version } from "./store";
+import { blobKey, getShareByKey, liveManifest, livePath, type Share, type Version } from "./store";
 
 /*
  * Live sites: a version's static build, served on a host of its own,
@@ -89,12 +89,19 @@ export async function serveLive(req: Request, env: ReviewEnv): Promise<Response>
   }
   // clean URLs: /about serves about.html or about/index.html, like a static host
   const candidates = path.endsWith("/") ? [`${path}index.html`] : [path, `${path}.html`, `${path}/index.html`];
+  // stored by content (a manifest of path -> hash), or by path for versions shared before
+  const manifest = await liveManifest(env, share.slug, versionId);
+  const keyOf = (p: string) => {
+    if (!manifest) return livePath(share.slug, versionId, p);
+    const hash = livePath(share.slug, versionId, p) ? manifest[p.replace(/^\/+/, "")] : undefined;
+    return hash ? blobKey(share.slug, hash) : null;
+  };
   for (const candidate of candidates) {
-    const key = livePath(share.slug, versionId, candidate);
+    const key = keyOf(candidate);
     const object = key ? await env.FILES.get(key) : null;
     if (object) return withFrameBridge(file(object, candidate, 200, req.method === "HEAD"));
   }
-  const missing = livePath(share.slug, versionId, "404.html");
+  const missing = keyOf("404.html");
   const fallback = missing ? await env.FILES.get(missing) : null;
   return fallback ? withFrameBridge(file(fallback, "/404.html", 404, req.method === "HEAD")) : notFound();
 }

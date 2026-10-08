@@ -49,8 +49,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .frame.interacting .interact-tag { display: inline-flex; }
 .interact-tag button { height: 20px; padding: 0 8px; border-radius: 6px; border: 0; background: var(--accent); color: #fff; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
 .frame-label { position: absolute; left: 0; bottom: 100%; padding-bottom: 6px; white-space: nowrap; color: var(--muted);
-  font-size: 12px; transform-origin: 0 100%; }
-.frame-label b { color: var(--text); font-weight: 550; margin-right: 6px; }
+  font-size: 12px; transform-origin: 0 100%; display: flex; align-items: center; overflow: hidden; }
+/* within its frame's width: the name gives way last, the size first */
+.frame-label b { color: var(--text); font-weight: 550; margin-right: 6px; flex: 0 1 auto; min-width: 24px; overflow: hidden; text-overflow: ellipsis; }
+.frame-label .fsize { flex: 0 1000 auto; min-width: 0; overflow: hidden; }
+.frame-label .live-btn, .frame-label .interact-tag { flex: none; }
 .frame-box { position: relative; overflow: hidden; border-radius: 2px; background: #fff; box-shadow: var(--frame-shadow); }
 .frame-box img, .frame-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .frame-box iframe { opacity: 0; transition: opacity .25s var(--ease-out); pointer-events: none; }
@@ -62,7 +65,7 @@ header { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; ali
 .brand span { font-weight: 600; letter-spacing: -.01em; }
 .brand .who { font-weight: 450; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 .brand form { display: contents; }
-.brand .who-btn, .brand a.who-btn { height: 28px; padding: 0 8px; border-radius: 8px; font-size: 13px; color: var(--text); text-decoration: none; display: inline-flex; align-items: center; }
+.brand .who-btn, .brand a.who-btn { height: 28px; padding: 0 8px; border-radius: 8px; font-size: 13px; color: var(--text); text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap; }
 .brand .who-btn:hover { background: var(--line); }
 .title { font-weight: 550; }
 .meta { color: var(--muted); }
@@ -86,7 +89,8 @@ button:hover { background: var(--line); }
 button:active { transform: scale(.96); }
 button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 #zoom { min-width: 56px; }
-.made { position: fixed; right: 14px; bottom: 18px; color: var(--muted); font-size: 11.5px; text-decoration: none; }
+.made { position: fixed; right: 12px; bottom: 14px; height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px;
+  background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; text-decoration: none; }
 .made:hover { color: var(--text); }
 #empty { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); }
 /* comments */
@@ -151,6 +155,16 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   #pop { left: 8px !important; right: 8px; top: auto !important; bottom: 8px; width: auto; max-height: 60dvh; }
   #panel { left: 8px; right: 8px; top: 56px; bottom: 68px; width: auto; }
 }
+/* first visit: how to review, once */
+#welcome { position: fixed; z-index: 25; left: 50%; bottom: 66px; transform: translateX(-50%); width: min(360px, calc(100vw - 16px)); padding: 14px 16px 12px;
+  background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px -12px rgba(0,0,0,.35); animation: pop-in .2s var(--ease-out); }
+#welcome b { display: block; font-weight: 600; margin-bottom: 8px; }
+#welcome ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; color: var(--muted); }
+#welcome li { display: flex; gap: 9px; align-items: baseline; }
+#welcome li::before { content: ""; flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); transform: translateY(-2px); }
+#welcome strong { font-weight: 600; color: var(--text); }
+#welcome kbd { font: inherit; font-size: 11px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--line); background: var(--field); color: var(--text); }
+#welcome .welcome-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 /* live site */
 .live-btn { height: 22px; min-width: 0; margin-left: 8px; padding: 0 8px 0 6px; gap: 4px; border-radius: 6px; vertical-align: middle;
   background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; }
@@ -350,7 +364,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     const el = document.createElement("div");
     el.className = "frame";
     el.style.cssText = "left:" + (f.x - minX) + "px;top:" + (f.y - minY) + "px;width:" + f.width + "px;height:" + f.height + "px";
-    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="The real site in a screen-sized window: it scrolls like on a real screen, so scroll animations and pinned sections behave as they will for visitors"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>Full screen</button>' : "") + '<span class="interact-tag">Interacting<button type="button" class="interact-done">Done</button></span>' + "</div>" +
+    el.innerHTML = '<div class="frame-label" data-w="' + f.width + '"><b title="' + esc(f.name) + '">' + esc(f.name) + '</b><span class="fsize">' + f.width + " × " + Math.round(f.height) + "</span>" + (showsLive(f) ? '<button class="live-btn" title="The real site in a screen-sized window: it scrolls like on a real screen, so scroll animations and pinned sections behave as they will for visitors"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>Full screen</button>' : "") + '<span class="interact-tag">Interacting<button type="button" class="interact-done">Done</button></span>' + "</div>" +
       '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe title="' + esc(f.name) + '" scrolling="no" loading="lazy"></iframe></div>';
     restFrame(f, el.querySelector("iframe"), el.querySelector("img"));
     const liveBtn = el.querySelector(".live-btn");
@@ -369,7 +383,10 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     world.style.transform = "translate(" + x + "px," + y + "px) scale(" + z + ")";
     zoomLabel.textContent = Math.round(z * 100) + "%";
     // labels keep a readable size at any zoom
-    for (const l of labels) l.style.transform = "scale(" + 1 / z + ")";
+    for (const l of labels) {
+      l.style.transform = "scale(" + 1 / z + ")";
+      l.style.maxWidth = Math.max(40, l.dataset.w * z) + "px";
+    }
     for (const p of world.querySelectorAll(".pin, .rcursor")) p.style.transform = "scale(" + 1 / z + ")";
     if (typeof placePop === "function") placePop();
   };
@@ -814,6 +831,35 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
       if (openId && !(typing && typing.value)) openThread(openId);
       else renderPins();
     } catch {}
+  }
+
+  welcome();
+  /** The first time someone opens a review link: how it works, in three lines. */
+  function welcome() {
+    try {
+      if (localStorage.getItem("tc-review-welcomed")) return;
+    } catch {
+      return;
+    }
+    const touch = matchMedia("(pointer: coarse)").matches;
+    const tips = [
+      touch ? "Drag to move around, pinch to zoom." : "Scroll or drag to move around. Pinch or <kbd>Ctrl</kbd> + scroll to zoom.",
+      manifest.frames.some(showsLive) ? "Pages are the real site: " + (touch ? "tap one" : "click one") + " to scroll and try it." : "",
+      canComment ? "Press <strong>Comment</strong>" + (touch ? "" : " (or <kbd>C</kbd>)") + ", then " + (touch ? "tap" : "click") + " the design to leave a note." : "",
+    ].filter(Boolean);
+    const card = document.createElement("div");
+    card.id = "welcome";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", "How to review");
+    card.innerHTML = "<b>How to review</b><ul>" + tips.map((t) => "<li><span>" + t + "</span></li>").join("") + '</ul><div class="welcome-actions"><button class="btn-primary">Got it</button></div>';
+    const done = () => {
+      card.remove();
+      try { localStorage.setItem("tc-review-welcomed", "1"); } catch {}
+    };
+    card.querySelector("button").onclick = done;
+    // the first comment or interaction counts as having read it
+    stage.addEventListener("pointerdown", () => setTimeout(done, 1200), { once: true });
+    document.body.appendChild(card);
   }
 
   if (canComment) {

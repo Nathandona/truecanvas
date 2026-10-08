@@ -320,6 +320,14 @@ function onEvent(e: ServerEvent) {
     case "comments":
       if (e.canvas === s.canvas) loadComments();
       break;
+    case "client-comment": {
+      const text = e.text.length > 90 ? `${e.text.slice(0, 90)}…` : e.text;
+      s.toast(`${e.name} commented on ${e.canvas}: “${text}”`, "info", {
+        label: "View",
+        run: () => useStore.setState({ canvas: e.canvas, rightTab: "comments" }),
+      });
+      break;
+    }
     case "git":
       markDesignChanged();
       loadGit(0);

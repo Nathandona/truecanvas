@@ -6,6 +6,8 @@
   "name": "truecanvas-review",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-07",
+  // run next to the database and files (D1, R2): most requests read them several times
+  "placement": { "mode": "smart" },
   // node:crypto: scrypt password hashes compatible with the original review site
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },

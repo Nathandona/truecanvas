@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -132,38 +133,61 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
 
   const skipped: string[] = [];
   let uploaded = 0;
-  const queue = [...files];
-  const worker = async () => {
-    for (let f = queue.shift(); f; f = queue.shift()) {
-      const body = fs.readFileSync(f.local);
-      if (body.length > MAX_FILE) {
-        skipped.push(f.remote);
-        continue;
+  const fitting = files.filter((f) => {
+    if (fs.statSync(f.local).size <= MAX_FILE) return true;
+    skipped.push(f.remote);
+    return false;
+  });
+  if (can.includes("batch")) {
+    // a few requests carrying many files: each request has a fixed cost, files are small
+    uploaded += await sendBatches(site, base, fitting.map((f) => ({ local: f.local, path: f.remote, type: contentType(f.local) })));
+  } else {
+    const queue = [...fitting];
+    const worker = async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) {
+        await request(site, "PUT", `${base}/files`, fs.readFileSync(f.local), { "x-path": f.remote, "content-type": contentType(f.local) });
+        uploaded++;
       }
-      await request(site, "PUT", `${base}/files`, body, { "x-path": f.remote, "content-type": contentType(f.local) });
-      uploaded++;
-    }
-  };
-  await Promise.all(Array.from({ length: 4 }, worker));
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+  }
   if (skipped.some((s) => s.endsWith(".html"))) throw new Error(`A frame is too large to upload (over 4.4 MB): ${skipped.filter((s) => s.endsWith(".html")).join(", ")}`);
 
   // the live site's files, under the version they belong to
   if (opts.live && "dir" in opts.live) {
     const liveDir = opts.live.dir;
-    const liveFiles = walk(liveDir);
-    const pending = [...liveFiles];
-    const liveWorker = async () => {
-      for (let rel = pending.shift(); rel; rel = pending.shift()) {
-        const body = fs.readFileSync(path.join(liveDir, rel));
-        if (body.length > MAX_FILE) {
-          skipped.push(`live/${rel}`);
-          continue;
-        }
-        await request(site, "PUT", `${base}/live/files?version=${manifest.id}`, body, { "x-path": rel, "content-type": contentType(rel) });
-        uploaded++;
+    const liveFiles = walk(liveDir).filter((rel) => {
+      if (fs.statSync(path.join(liveDir, rel)).size <= MAX_FILE) return true;
+      skipped.push(`live/${rel}`);
+      return false;
+    });
+    if (can.includes("live-blobs")) {
+      // by content: the site says which files it doesn't have yet (sharing again sends only what changed)
+      const hashes = new Map<string, string>();
+      for (const rel of liveFiles) hashes.set(rel, createHash("sha256").update(fs.readFileSync(path.join(liveDir, rel))).digest("hex"));
+      const { missing } = (await request(site, "POST", `${base}/live/manifest?version=${manifest.id}`, { files: Object.fromEntries(hashes) })) as { missing: string[] };
+      const byHash = new Map([...hashes].map(([rel, hash]) => [hash, rel]));
+      const pending = missing.map((h) => byHash.get(h)!).filter(Boolean);
+      if (can.includes("batch")) uploaded += await sendBatches(site, base, pending.map((rel) => ({ local: path.join(liveDir, rel), hash: hashes.get(rel)! })));
+      else {
+        const blobWorker = async () => {
+          for (let rel = pending.shift(); rel; rel = pending.shift()) {
+            await request(site, "PUT", `${base}/live/blobs`, fs.readFileSync(path.join(liveDir, rel)), { "x-hash": hashes.get(rel)!, "content-type": "application/octet-stream" });
+            uploaded++;
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, blobWorker));
       }
-    };
-    await Promise.all(Array.from({ length: 6 }, liveWorker));
+    } else {
+      const pending = [...liveFiles];
+      const liveWorker = async () => {
+        for (let rel = pending.shift(); rel; rel = pending.shift()) {
+          await request(site, "PUT", `${base}/live/files?version=${manifest.id}`, fs.readFileSync(path.join(liveDir, rel)), { "x-path": rel, "content-type": contentType(rel) });
+          uploaded++;
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, liveWorker));
+    }
   }
 
   const change = {
@@ -183,6 +207,40 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
   // invitations go out once there's something to open
   const invited = opts.invite?.length ? await inviteTo(site, share.slug, opts.invite) : [];
   return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password, live: done.live ?? null, access, invited };
+}
+
+/**
+ * Files sent several per request: [4-byte header length][JSON header][bodies].
+ * Batches stay under a few MB, three in flight. Returns how many were sent.
+ */
+async function sendBatches(site: ReviewSite, base: string, items: { local: string; path?: string; hash?: string; type?: string }[]): Promise<number> {
+  const LIMIT = 4 * 1024 * 1024;
+  const batches: (typeof items)[] = [];
+  let current: typeof items = [];
+  let size = 0;
+  for (const item of items) {
+    const n = fs.statSync(item.local).size;
+    if (current.length && (size + n > LIMIT || current.length >= 150)) {
+      batches.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(item);
+    size += n;
+  }
+  if (current.length) batches.push(current);
+  const send = async (batch: typeof items) => {
+    const bodies = batch.map((i) => fs.readFileSync(i.local));
+    const head = Buffer.from(JSON.stringify({ files: batch.map((i, k) => ({ path: i.path, hash: i.hash, type: i.type, size: bodies[k].length })) }));
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(head.length);
+    await request(site, "POST", `${base}/files/batch`, Buffer.concat([len, head, ...bodies]), { "content-type": "application/octet-stream" });
+  };
+  const queue = [...batches];
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    for (let b = queue.shift(); b; b = queue.shift()) await send(b);
+  }));
+  return items.length;
 }
 
 async function inviteTo(site: ReviewSite, slug: string, emails: string[]): Promise<Invited[]> {
@@ -216,6 +274,40 @@ export async function updateAccess(site: ReviewSite, project: string, canvas: st
   const invited = change.invite?.length ? await inviteTo(site, found.slug, change.invite) : [];
   const share = (await request(site, "GET", `/api/shares/${found.slug}`)) as { access?: Access };
   return { url: `${site.url}/s/${found.slug}`, access: access ?? share.access ?? null, invited };
+}
+
+/** A canvas's link as it is now, without publishing anything: null when it has none. */
+export async function linkInfo(site: ReviewSite, project: string, canvas: string): Promise<LinkInfo | null> {
+  const found = (await request(site, "GET", `/api/shares?project=${encodeURIComponent(project)}&canvas=${encodeURIComponent(canvas)}`)) as { slug: string | null };
+  if (!found.slug) return null;
+  const share = (await request(site, "GET", `/api/shares/${found.slug}`)) as {
+    title?: string;
+    access?: Access;
+    password?: boolean;
+    versions?: { id: string; createdAt: number; live?: unknown }[];
+  };
+  const last = share.versions?.at(-1);
+  return {
+    url: `${site.url}/s/${found.slug}`,
+    title: share.title ?? canvas,
+    access: share.access ?? null,
+    password: !!share.password,
+    versions: share.versions?.length ?? 0,
+    updatedAt: last?.createdAt ?? null,
+    live: !!last?.live,
+  };
+}
+
+export interface LinkInfo {
+  url: string;
+  title: string;
+  access: Access | null;
+  password: boolean;
+  versions: number;
+  /** when the latest version was published */
+  updatedAt: number | null;
+  /** the latest version has the real site */
+  live: boolean;
 }
 
 /** Deletes a canvas's link with its versions, files and comments. */

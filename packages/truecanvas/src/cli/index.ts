@@ -37,7 +37,8 @@ Usage
   truecanvas desktop   Add Truecanvas to your app launcher (Linux); "desktop remove" undoes it
   truecanvas share [canvas]  Share a canvas as a link for clients (needs truecanvas running).
                        --password <p>, --no-password, --revoke, --restore, --delete, --title <t>, --local (preview only),
-                       --live <url|dir>: a live version clients open with "View live" (where the app runs, or a static build)
+                       The real site (your app built as static pages) is included, so clients click the actual pages;
+                       --frozen leaves it out, --live <url|dir> uses another one (where the app runs, or a static build)
                        --invite <emails>: invite people by email (they sign in with a link; new links are invited-only)
                        --access invited|password|public: who can open the link
                        --link-only: with --invite or --access, change the link without a new version
@@ -147,6 +148,7 @@ async function main() {
       delete: { type: "boolean" },
       token: { type: "string" },
       live: { type: "string" },
+      frozen: { type: "boolean" },
       invite: { type: "string", multiple: true },
       access: { type: "string" },
       "link-only": { type: "boolean" },
@@ -362,27 +364,29 @@ async function main() {
     const res = await fetch(`${base}/api/share/snapshot`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: base },
-      body: JSON.stringify({ canvas, local: !publish, title: values.title, password, live, access, invite }),
+      body: JSON.stringify({ canvas, local: !publish, title: values.title, password, live, access, invite, realSite: !values.frozen }),
     });
     const body = (await res.json()) as {
       error?: string;
       preview: string;
       manifest: { frames: unknown[]; missing: string[]; external: string[] };
       published: { url: string; versions: number; skipped: string[]; password: boolean; live: string | null; access: Access | null; invited: Invited[] } | null;
+      realSiteError?: string | null;
     };
     if (!res.ok) {
       console.error(`  ${c.red("✗")} ${body.error}`);
       process.exit(1);
     }
     const { manifest, published } = body;
-    console.log(`  ${c.green("✓")} ${manifest.frames.length} frame${manifest.frames.length === 1 ? "" : "s"} frozen: no scripts, no API calls.`);
+    console.log(`  ${c.green("✓")} ${manifest.frames.length} frame${manifest.frames.length === 1 ? "" : "s"} rendered.`);
     if (manifest.external.length) console.log(`  ${c.yellow("!")} While rendering, the app called ${manifest.external.join(", ")}. Whatever it showed is in the snapshot: use sample data for client links.`);
     if (manifest.missing.length) console.log(`  ${c.yellow("!")} ${manifest.missing.length} asset${manifest.missing.length === 1 ? "" : "s"} couldn't be fetched.`);
     if (published?.skipped.length) console.log(`  ${c.yellow("!")} Left out (over 4.4 MB): ${published.skipped.join(", ")}`);
     if (published) {
       const who = published.access ? `, ${accessLabel(published.access)}` : published.password ? ", password protected" : "";
       console.log(`  ${c.green("✓")} Shared: ${c.bold(published.url)} ${c.dim(`(version ${published.versions}${who})`)}`);
-      if (published.live) console.log(`  ${c.green("✓")} Live: ${published.live} ${c.dim(published.access !== "public" && (published.access || published.password) ? "(opens from the link's View live button)" : "")}`);
+      if (published.live) console.log(`  ${c.green("✓")} Real site included: clients scroll and click the actual pages.`);
+      if (body.realSiteError) console.log(`  ${c.yellow("!")} The real site couldn't be built, so this version has frozen frames only:\n${c.dim(body.realSiteError.replace(/^/gm, "    "))}`);
       printInvited(published.invited);
       if (published.access === "invited" && !published.invited.length) console.log(`  ${c.dim("Only invited people and your studio can open it. Invite someone:")} ${c.accent(`npx truecanvas share ${canvas} --invite name@client.com --link-only`)}`);
       console.log("");
