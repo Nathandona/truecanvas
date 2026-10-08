@@ -92,11 +92,11 @@ export async function serveLive(req: Request, env: ReviewEnv): Promise<Response>
   for (const candidate of candidates) {
     const key = livePath(share.slug, versionId, candidate);
     const object = key ? await env.FILES.get(key) : null;
-    if (object) return file(object, candidate, 200, req.method === "HEAD");
+    if (object) return withFrameBridge(file(object, candidate, 200, req.method === "HEAD"));
   }
   const missing = livePath(share.slug, versionId, "404.html");
   const fallback = missing ? await env.FILES.get(missing) : null;
-  return fallback ? file(fallback, "/404.html", 404, req.method === "HEAD") : notFound();
+  return fallback ? withFrameBridge(file(fallback, "/404.html", 404, req.method === "HEAD")) : notFound();
 }
 
 /**
@@ -126,7 +126,29 @@ async function serveSession(req: Request, env: ReviewEnv, key: string): Promise<
   if (!["GET", "HEAD", "POST"].includes(req.method)) return new Response("Method not allowed", { status: 405 });
   const path = safePath(url.pathname + url.search);
   if (!path) return notFound();
-  return tunnel(env, share.slug, req, path);
+  const res = await tunnel(env, share.slug, req, path);
+  // HMR sockets pass through untouched
+  return res.status === 101 || req.headers.get("upgrade") ? res : withFrameBridge(res);
+}
+
+/*
+ * In a review link, a frame of the real site takes the mouse after a click.
+ * Its wheel and Esc then land in this page, on another origin: forward them to
+ * the review page so the canvas still scrolls and Esc still gives the mouse
+ * back. Only when framed; nothing else is touched.
+ */
+const FRAME_BRIDGE = `<script>(function(){if(window.parent===window)return;var p=function(m){m.__tc=1;parent.postMessage(m,"*")};addEventListener("wheel",function(e){if(e.ctrlKey||e.metaKey)e.preventDefault();p({t:"wheel",dx:e.deltaX,dy:e.deltaY,dm:e.deltaMode,zoom:e.ctrlKey||e.metaKey,x:e.clientX,y:e.clientY})},{passive:false});addEventListener("keydown",function(e){if(e.key==="Escape")p({t:"escape"})})})();</script>`;
+
+/** HTML pages of live sites and sessions get the frame bridge. */
+export function withFrameBridge(res: Response): Response {
+  if (!(res.headers.get("content-type") ?? "").includes("text/html") || !res.body) return res;
+  const out = new HTMLRewriter()
+    .on("head", { element: (el) => void el.prepend(FRAME_BRIDGE, { html: true }) })
+    .transform(res);
+  // the length changed
+  const headers = new Headers(out.headers);
+  headers.delete("content-length");
+  return new Response(out.body, { status: out.status, statusText: out.statusText, headers });
 }
 
 function file(object: R2ObjectBody, path: string, status: number, head: boolean) {
@@ -146,7 +168,7 @@ function file(object: R2ObjectBody, path: string, status: number, head: boolean)
 }
 
 const locked = (env: ReviewEnv) =>
-  page(env, "Open this preview from its review link", "This live preview is protected. Open it with the View live button on the review link the studio sent you.", 403);
+  page(env, "Open this preview from its review link", "This live preview is protected. Open it from the review link the studio sent you.", 403);
 const gone = (env: ReviewEnv) => page(env, "This preview isn't available", "It may have been replaced by a newer version. Open the review link again.", 404);
 
 const TYPES: Record<string, string> = {

@@ -3,7 +3,7 @@
  * frozen frames out at their canvas positions, with pan and zoom (drag,
  * wheel, pinch, keys). Frames are sandboxed iframes without scripts, under a
  * transparent layer that takes every pointer event. When the version has a
- * live site, each frame gets a "View live" button: the real site in a
+ * live site, each frame gets a "Full screen" button: the real site in a
  * device-sized window, scripts and animations included, on its own origin.
  * Self-contained: no
  * build step, no dependencies, so the same file works locally and on a
@@ -350,7 +350,7 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     const el = document.createElement("div");
     el.className = "frame";
     el.style.cssText = "left:" + (f.x - minX) + "px;top:" + (f.y - minY) + "px;width:" + f.width + "px;height:" + f.height + "px";
-    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="Open the live site at this width"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>View live</button>' : "") + '<span class="interact-tag">Interacting<button type="button" class="interact-done">Done</button></span>' + "</div>" +
+    el.innerHTML = '<div class="frame-label"><b>' + esc(f.name) + "</b>" + f.width + " × " + Math.round(f.height) + (manifest.live ? '<button class="live-btn" title="The real site in a screen-sized window: it scrolls like on a real screen, so scroll animations and pinned sections behave as they will for visitors"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>Full screen</button>' : "") + '<span class="interact-tag">Interacting<button type="button" class="interact-done">Done</button></span>' + "</div>" +
       '<div class="frame-box" style="width:' + f.width + "px;height:" + f.height + 'px"><img alt="" src="' + esc(f.image) + '"><iframe title="' + esc(f.name) + '" scrolling="no" loading="lazy"></iframe></div>';
     restFrame(f, el.querySelector("iframe"), el.querySelector("img"));
     const liveBtn = el.querySelector(".live-btn");
@@ -408,12 +408,30 @@ button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
     else { x -= e.deltaX; y -= e.deltaY; apply(); }
   }, { passive: false });
 
+  // a real-site frame that has the mouse forwards its wheel and Esc (the review
+  // site adds a small bridge to those pages): the canvas keeps scrolling
+  addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || m.__tc !== 1) return;
+    const iframe = [...world.querySelectorAll(".frame-box iframe")].find((f) => f.contentWindow === e.source);
+    if (!iframe) return;
+    if (m.t === "escape") { setInteracting(null); return; }
+    if (m.t !== "wheel") return;
+    const unit = m.dm === 1 ? 16 : m.dm === 2 ? innerHeight : 1;
+    const dx = (+m.dx || 0) * unit, dy = (+m.dy || 0) * unit;
+    if (m.zoom) {
+      // the frame is drawn at the canvas zoom: its coordinates scale with it
+      const r = iframe.getBoundingClientRect();
+      zoomAt(z * Math.exp(-dy * 0.01), r.left + (+m.x || 0) * z, r.top + (+m.y || 0) * z);
+    } else { x -= dx; y -= dy; apply(); }
+  });
+
   // drag to pan, two fingers to pinch
   const pointers = new Map();
   let pinch = null;
   let moved = false, downAt = null;
   stage.addEventListener("pointerdown", (e) => {
-    // pins and View live are buttons: they take their own clicks
+    // pins, Full screen and Done are buttons: they take their own clicks
     if (e.target.closest && e.target.closest(".pin, .live-btn, .interact-done")) return;
     stage.setPointerCapture(e.pointerId);
     moved = false;
