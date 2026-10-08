@@ -16,6 +16,7 @@ import { syncComponentRegistry } from "../core/scaffold.js";
 import { clearCompare, frameChanges, writeCompare } from "../core/compare.js";
 import { parseCanvas as parseSource } from "../core/parse.js";
 import { Screenshotter } from "./screenshot.js";
+import { appRun } from "./app-run.js";
 import { componentsDir } from "../core/components.js";
 import { prDesignSection, renderFrame, reviewAll, reviewPage, type PageReview, type PrImage } from "./review.js";
 import type { PullRequest } from "../core/git.js";
@@ -148,6 +149,8 @@ export async function startServer(ws: Workspace) {
     const route = `${req.method} ${url.pathname}`;
     const user = { kind: "user" } as const;
     switch (route) {
+      case "GET /api/app":
+        return json(res, 200, appRun);
       case "GET /api/state":
         return json(res, 200, {
           appUrl: config.appUrl,
@@ -477,7 +480,15 @@ export async function startServer(ws: Workspace) {
         const canvas = body.canvas ?? ws.selection.canvas ?? ws.canvases()[0];
         if (!canvas) return json(res, 400, { error: "No canvas to share live yet." });
         assertCanvasName(canvas);
-        return json(res, 200, { session: await sessions.start(canvas, { name: body.name }) });
+        // no link yet: share it first (the site's default access), so Go live is one click
+        const share = async () => {
+          const site = reviewSite();
+          if (!site) return;
+          const { dir, manifest } = await createSnapshot(ws, shots, canvas, {});
+          await publishSnapshot(site, dir, manifest, {});
+          commentSync.forget(canvas);
+        };
+        return json(res, 200, { session: await sessions.start(canvas, { name: body.name, share }) });
       }
       case "POST /api/session/stop": {
         // no canvas: every session of the project

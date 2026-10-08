@@ -19,6 +19,7 @@ import { doctor } from "./doctor.js";
 import { ACCESS_MODES, connectReviewSite, deleteShare, parseEmails, reviewSite, updateAccess, updateShare, type Access, type Invited, type LiveSite } from "../share/publish.js";
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
+import { appRun } from "../server/app-run.js";
 
 const HELP = `truecanvas: design with your real React components
 
@@ -444,7 +445,10 @@ async function main() {
   let next: ChildProcess | null = null;
   const appUp = await reachable(config.appUrl);
   const devCommand = config.framework === "vite" ? "vite" : "next dev";
-  if (!appUp && values.next && !values["no-next"]) next = startApp(root, config.appUrl, config.framework);
+  if (!appUp && values.next && !values["no-next"]) {
+    next = startApp(root, config.appUrl, config.framework);
+    appRun.state = "starting";
+  }
 
   console.log(`
   ${c.accent("◆")} ${c.bold("Truecanvas")} ${c.dim(`v${version}`)}
@@ -459,7 +463,11 @@ ${hasAgentConfig(root, config.port) ? `  ${c.dim("Agents")}   connected through 
 
   if (next) {
     const exited = new Promise<"exited">((r) => next!.once("exit", () => r("exited")));
+    void exited.then(() => {
+      if (appRun.state !== "ready") appRun.state = "failed";
+    });
     const result = await Promise.race([waitFor(config.appUrl, 90_000), exited]);
+    if (result === true) appRun.state = "ready";
     if (result === true) console.log(`  ${c.green("✓")} App ready at ${config.appUrl}\n`);
     else if (result === "exited") console.log(`  ${c.dim(`${devCommand} stopped (see above). Start your app, the editor connects as soon as it's up.`)}\n`);
     else console.log(`  ${c.dim(`${devCommand} is taking a while. The editor will connect when it's up.`)}\n`);
@@ -627,7 +635,12 @@ function startApp(root: string, appUrl: string, framework: Framework): ChildProc
       buf += chunk.toString();
       const lines = buf.split(/\r?\n/);
       buf = lines.pop()!;
-      for (const line of lines) if (line.trim()) process.stdout.write(`  ${prefix}${line}\n`);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        process.stdout.write(`  ${prefix}${line}\n`);
+        appRun.log.push(line.replace(/\x1b\[[0-9;]*m/g, ""));
+        if (appRun.log.length > 20) appRun.log.shift();
+      }
     });
   }
   return child;

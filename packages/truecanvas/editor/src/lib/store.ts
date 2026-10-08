@@ -137,7 +137,10 @@ interface State {
   openThread: string | null;
   draftComment: { frame: string; x: number; y: number; node: { path: string; name: string } | null } | null;
   showResolved: boolean;
-  appStatus: "checking" | "up" | "down";
+  /** starting: Truecanvas started the app and it is still compiling */
+  appStatus: "checking" | "starting" | "up" | "down";
+  /** the app's last lines of output, when it stopped */
+  appLog: string[];
   editingText: string | null;
   busy: number;
 }
@@ -242,6 +245,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   draftComment: null,
   showResolved: false,
   appStatus: "checking",
+  appLog: [],
   editingText: null,
   busy: 0,
 

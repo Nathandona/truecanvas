@@ -24,6 +24,7 @@ export function App() {
   const canvas = useStore((s) => s.canvas);
   const toasts = useStore((s) => s.toasts);
   const appStatus = useStore((s) => s.appStatus);
+  const appLog = useStore((s) => s.appLog);
   const appUrl = useStore((s) => s.appUrl);
   const framework = useStore((s) => s.framework);
   const connected = useStore((s) => s.connected);
@@ -122,7 +123,11 @@ export function App() {
         await fetch(appUrl, { mode: "no-cors", cache: "no-store" });
         if (useStore.getState().appStatus !== "up") useStore.setState({ appStatus: "up" });
       } catch {
-        useStore.setState({ appStatus: "down" });
+        // not answering: still compiling after Truecanvas started it, or really down?
+        const run = (await fetch("/api/app", { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)) as { state: string; log: string[] } | null;
+        useStore.setState(run?.state === "starting" ? { appStatus: "starting" } : { appStatus: "down", appLog: run?.state === "failed" ? run.log.slice(-6) : [] });
       }
       if (!stop) setTimeout(check, useStore.getState().appStatus === "up" ? 15000 : 2500);
     };
@@ -165,6 +170,17 @@ export function App() {
         <LibrariesDialog />
         <ShareDialog />
         <Toolbar />
+        {appStatus === "starting" && (
+          <div className="banner" role="status">
+            <LoaderCircle size={14} className="spin-working" />
+            <div>
+              <div style={{ fontWeight: 600 }}>Starting your app…</div>
+              <div className="muted">
+                <span className="mono">{framework === "vite" ? "vite" : "next dev"}</span> is compiling. Frames appear as soon as it answers.
+              </div>
+            </div>
+          </div>
+        )}
         {appStatus === "down" && (
           <div className="banner" role="status">
             <span className="dot" />
@@ -173,6 +189,7 @@ export function App() {
               <div className="muted">
                 Start <span className="mono">{framework === "vite" ? "vite" : "next dev"}</span>. Frames render from <span className="mono">{appUrl}</span>
               </div>
+              {appLog.length > 0 && <pre className="mono app-log">{appLog.join("\n")}</pre>}
             </div>
             <button className="btn outline" onClick={() => useStore.setState({ appStatus: "checking" })}>
               <RefreshCw size={13} /> Retry
@@ -180,7 +197,7 @@ export function App() {
           </div>
         )}
         {docError && (
-          <div className="banner" style={{ top: appStatus === "down" ? 76 : 12 }} role="alert">
+          <div className="banner" style={{ top: appStatus === "down" || appStatus === "starting" ? 76 : 12 }} role="alert">
             <span className="dot" />
             <div>
               <div style={{ fontWeight: 600 }}>The canvas file has a syntax error</div>
@@ -189,7 +206,7 @@ export function App() {
           </div>
         )}
         {!connected && (
-          <div className="banner" style={{ top: appStatus === "down" ? 76 : 12 }} role="status">
+          <div className="banner" style={{ top: appStatus === "down" || appStatus === "starting" ? 76 : 12 }} role="status">
             <LoaderCircle size={14} className="spin-working" />
             <div className="muted">Lost connection to Truecanvas. Reconnecting…</div>
           </div>

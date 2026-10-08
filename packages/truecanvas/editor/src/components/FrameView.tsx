@@ -27,7 +27,7 @@ export const FrameView = memo(function FrameView({ frame, x: posX, y: posY, widt
     [frame.frameName],
   );
   // the iframe really unmounting (not a re-render): it'll need to say "ready" again
-  const live = mounted && appStatus !== "down";
+  const live = mounted && appStatus !== "down" && appStatus !== "starting";
   useEffect(() => {
     if (!live) return;
     return () => forgetFrameReady(frame.frameName);
@@ -96,7 +96,7 @@ export const FrameView = memo(function FrameView({ frame, x: posX, y: posY, widt
       {chrome && <DeviceChrome device={chrome} dark={dark} />}
       {/* fades out once the page is ready and has its real height, so nothing jumps */}
       <div className={`placeholder${settled ? " gone" : ""}`} aria-hidden>
-        {appStatus === "down" ? "Waiting for the app…" : ""}
+        {appStatus === "starting" ? "Starting the app…" : appStatus === "down" ? "Waiting for the app…" : ""}
       </div>
       {error && (
         <div className="frame-error">

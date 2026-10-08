@@ -1030,6 +1030,16 @@ select {
   z-index: 6;
   max-width: calc(100% - 32px);
 }
+.banner .app-log {
+  margin: 6px 0 0;
+  max-width: 520px;
+  max-height: 96px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--muted, inherit);
+}
 .banner .dot {
   width: 8px;
   height: 8px;
