@@ -129,7 +129,7 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
 
   const files: { local: string; remote: string }[] = [];
   for (const name of fs.readdirSync(path.join(dir, "assets"))) if (!known.has(name)) files.push({ local: path.join(dir, "assets", name), remote: `assets/${name}` });
-  for (const f of manifest.frames) for (const p of [f.html, f.image]) files.push({ local: path.join(dir, p), remote: `${manifest.id}/${p}` });
+  for (const f of manifest.frames) for (const p of [f.html, f.image, ...(f.thumb && can.includes("thumbs") ? [f.thumb] : [])]) files.push({ local: path.join(dir, p), remote: `${manifest.id}/${p}` });
 
   const skipped: string[] = [];
   let uploaded = 0;
@@ -203,7 +203,7 @@ export async function publishSnapshot(site: ReviewSite, dir: string, manifest: S
     access = after.access ?? access;
   }
   const live = opts.live ? ("url" in opts.live ? { url: opts.live.url } : { files: true }) : undefined;
-  const done = (await request(site, "POST", `${base}/versions`, { id: manifest.id, createdAt: manifest.createdAt, frames: manifest.frames, live })) as { url: string; versions: number; live?: string | null };
+  const done = (await request(site, "POST", `${base}/versions`, { id: manifest.id, createdAt: manifest.createdAt, frames: can.includes("thumbs") ? manifest.frames : manifest.frames.map(({ thumb: _, ...f }) => f), live })) as { url: string; versions: number; live?: string | null };
   // invitations go out once there's something to open
   const invited = opts.invite?.length ? await inviteTo(site, share.slug, opts.invite) : [];
   return { url: done.url, version: manifest.id, versions: done.versions, uploaded, skipped, password, live: done.live ?? null, access, invited };

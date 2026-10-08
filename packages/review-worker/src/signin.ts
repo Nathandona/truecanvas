@@ -1,6 +1,6 @@
 import type { ReviewEnv } from "./env";
 import { esc, icon, notFound, page, safeNext, sameOrigin } from "./http";
-import { addMember, findInvite, isEmail, listInvites, listMembers, maySignIn, normalEmail, removeMember } from "./people";
+import { addMember, createInvite, findInvite, isEmail, listInvites, listMembers, maySignIn, normalEmail, removeMember } from "./people";
 import { createSignIn, nameFromEmail as defaultName, sendLinkEmail, signInOn, signOutHeaders, verifyUrl, viewerOf, type Viewer } from "./session";
 import { getShare, listShares } from "./store";
 
@@ -36,6 +36,8 @@ export async function signedIn(req: Request, env: ReviewEnv, parts: string[]): P
       return members(req, env);
     case "GET links":
       return links(req, env);
+    case "POST links":
+      return inviteFromLinks(req, env);
   }
   return null;
 }
@@ -229,10 +231,10 @@ async function links(req: Request, env: ReviewEnv): Promise<Response> {
       const v = latestBy.get(s.slug);
       let preview = "";
       try {
-        const frames = v ? (JSON.parse(v.frames) as { name: string; image: string; route?: string }[]) : [];
+        const frames = v ? (JSON.parse(v.frames) as { name: string; image: string; thumb?: string; route?: string }[]) : [];
         // a page frame if there is one: it's what the client opens
         const f = frames.find((x) => x.route) ?? frames[0];
-        if (f && v) preview = `/s/${s.slug}/v/${v.id}/${f.image}`;
+        if (f && v) preview = `/s/${s.slug}/v/${v.id}/${f.thumb ?? f.image}`;
       } catch {
         /* no preview */
       }
@@ -246,12 +248,17 @@ async function links(req: Request, env: ReviewEnv): Promise<Response> {
       const comments = openBy.get(s.slug) ?? 0;
       const url = new URL(`/s/${s.slug}`, req.url).href;
       const search = `${s.title} ${s.project} ${s.canvas} ${invites.map((i) => i.email).join(" ")}`.toLowerCase();
-      return `<a class="card${s.revoked ? " revoked" : ""}" href="/s/${esc(s.slug)}" data-search="${esc(search)}">
+      return `<div class="card${s.revoked ? " revoked" : ""}" data-search="${esc(search)}">
   <div class="thumb">${preview ? `<img alt="" loading="lazy" decoding="async" src="${esc(preview)}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'none',textContent:'No preview'}))">` : `<span class="none">No versions yet</span>`}
     <button class="copy" type="button" data-url="${esc(url)}" aria-label="Copy link" title="Copy link">${icon("copy")}</button></div>
-  <div class="body"><span class="title">${esc(s.title)}</span><span class="sub">${esc(s.project)} / ${esc(s.canvas)}${v ? ` · ${v.n} version${v.n === 1 ? "" : "s"} · ${since(v.at)}` : ""}</span>
-    <span class="chips">${comments ? `<span class="chip hot">${icon("message", 12)} ${comments} open comment${comments === 1 ? "" : "s"}</span>` : ""}${s.revoked ? '<span class="chip off">Revoked</span>' : who}</span></div>
-</a>`;
+  <div class="body"><a class="title" href="/s/${esc(s.slug)}">${esc(s.title)}</a><span class="sub">${esc(s.project)} / ${esc(s.canvas)}${v ? ` · ${v.n} version${v.n === 1 ? "" : "s"} · ${since(v.at)}` : ""}</span>
+    <span class="chips">${comments ? `<span class="chip hot">${icon("message", 12)} ${comments} open comment${comments === 1 ? "" : "s"}</span>` : ""}${s.revoked ? '<span class="chip off">Revoked</span>' : who}</span>
+    ${
+      s.revoked
+        ? ""
+        : `<details class="invite"><summary>${icon("users", 13)} Invite</summary><form method="post" action="/links"><input type="hidden" name="slug" value="${esc(s.slug)}"><input name="emails" type="text" inputmode="email" required placeholder="client@company.com" aria-label="Emails to invite" autocomplete="off"><button type="submit">Send</button></form><p class="hint">Each person gets an email that signs them in and opens the design.</p></details>`
+    }</div>
+</div>`;
     }),
   );
   const script = `<script>
@@ -274,10 +281,11 @@ if (q) q.addEventListener("input", () => {
   document.getElementById("none").classList.toggle("hidden", shown > 0);
 });
 </script>`;
+  const note = new URL(req.url).searchParams.get("invited");
   return page(
     env,
     "Links",
-    `<div class="head"><div><h1>Links <span class="n">${shares.length}</span></h1><p>Every page shared from Truecanvas, the most recently updated first.</p></div>${
+    `${note ? `<div class="notice" role="status">${icon("check")} ${esc(note)}</div>` : ""}<div class="head"><div><h1>Links <span class="n">${shares.length}</span></h1><p>Every page shared from Truecanvas, the most recently updated first.</p></div>${
       shares.length ? `<label class="search">${icon("search")}<input id="q" type="search" placeholder="Search links or people" aria-label="Search links"></label>` : ""
     }</div>
 ${
@@ -289,4 +297,28 @@ ${
     {},
     { app: { email: viewer.email, active: "links" } },
   );
+}
+
+/** Invites people to a link from the links page: each is emailed, the link stays as it is otherwise. */
+async function inviteFromLinks(req: Request, env: ReviewEnv): Promise<Response> {
+  const viewer = await studioOnly(req, env);
+  if (viewer instanceof Response) return viewer;
+  if (!sameOrigin(req)) return notFound();
+  const form = await req.formData().catch(() => null);
+  const share = await getShare(env, String(form?.get("slug") ?? ""));
+  if (!share || share.revoked) return notFound();
+  const emails = [...new Set(String(form?.get("emails") ?? "").split(/[\s,;]+/).map(normalEmail).filter(Boolean))].slice(0, 20);
+  const good = emails.filter(isEmail);
+  const sent: string[] = [];
+  for (const email of good) {
+    const token = await createInvite(env, share.slug, email);
+    await sendInvitation(req, env, email, token, share.title).then(() => sent.push(email)).catch(() => {});
+  }
+  const bad = emails.filter((e) => !isEmail(e));
+  const note = sent.length
+    ? `Invited ${sent.join(", ")} to ${share.title}.${bad.length ? ` Not an email: ${bad.join(", ")}.` : ""}`
+    : bad.length
+      ? `Not an email: ${bad.join(", ")}.`
+      : "Couldn't send the invitation. Try again in a moment.";
+  return Response.redirect(new URL(`/links?invited=${encodeURIComponent(note)}`, req.url).href, 303);
 }

@@ -183,7 +183,7 @@ export async function rememberAssets(env: ReviewEnv, slug: string, names: string
 export function filePath(slug: string, file: string): string | null {
   const asset = /^assets\/([a-f0-9]{8,64}\.[a-z0-9]{1,5})$/.exec(file);
   if (asset) return `shares/${slug}/assets/${asset[1]}`;
-  const frame = /^(\d{8}-\d{6})\/frames\/([a-z0-9-]{1,80}\.(?:html|png))$/.exec(file);
+  const frame = /^(\d{8}-\d{6})\/frames\/([a-z0-9-]{1,80}\.(?:html|png|thumb\.jpg))$/.exec(file);
   if (frame) return `shares/${slug}/${frame[1]}/frames/${frame[2]}`;
   return null;
 }

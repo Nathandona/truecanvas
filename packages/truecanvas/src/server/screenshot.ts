@@ -184,7 +184,11 @@ export class Screenshotter {
       }
       const png = await page.screenshot({ type: "png", fullPage: true });
       const viewport = page.viewportSize()!;
-      return { url: raw.url, html: raw.html, css: raw.css, canvases, png, width: viewport.width, height: raw.height, requests: [...requests] };
+      // a light preview of the top (links page, emails): the full image of a long page weighs megabytes
+      const thumb = await page
+        .screenshot({ type: "jpeg", quality: 72, clip: { x: 0, y: 0, width: viewport.width, height: Math.min(raw.height || viewport.height, Math.round(viewport.width * 0.75)) } })
+        .catch(() => undefined);
+      return { url: raw.url, html: raw.html, css: raw.css, canvases, png, thumb, width: viewport.width, height: raw.height, requests: [...requests] };
     });
   }
 }
@@ -207,8 +211,10 @@ export interface RawSnapshot {
   html: string;
   css: { base: string; text: string; media: string; href?: string }[];
   canvases: { index: number; png: Buffer }[];
-  /** full-frame screenshot: thumbnail and fallback */
+  /** full-frame screenshot: the fallback */
   png: Buffer;
+  /** the top of the frame as a small JPEG, for previews */
+  thumb?: Buffer;
   width: number;
   height: number;
   /** every URL the page requested while rendering (to flag calls to real APIs) */

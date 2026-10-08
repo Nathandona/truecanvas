@@ -29,6 +29,8 @@ export interface ShareFrame {
   /** paths inside the snapshot */
   html: string;
   image: string;
+  /** a small preview of the frame's top (links page, emails) */
+  thumb?: string;
   /** a frame linked to a page: its URL in the app (e.g. "/pricing"), so the live site can show it */
   route?: string;
 }
@@ -75,9 +77,10 @@ export async function createSnapshot(ws: Workspace, shots: Screenshotter, canvas
     used.add(slug);
     fs.writeFileSync(path.join(dir, "frames", `${slug}.html`), await freeze(raw, assets));
     fs.writeFileSync(path.join(dir, "frames", `${slug}.png`), raw.png);
+    if (raw.thumb) fs.writeFileSync(path.join(dir, "frames", `${slug}.thumb.jpg`), raw.thumb);
     // only Next.js pages have a URL we can work out from their file
     const route = f.page && ws.config.framework === "next" ? routeOf(ws.config, f.page) : undefined;
-    out.push({ name: f.frameName, x: f.x, y: f.y, width: raw.width, height: f.height ?? raw.height, theme: f.theme, device: f.device, html: `frames/${slug}.html`, image: `frames/${slug}.png`, ...(route ? { route } : {}) });
+    out.push({ name: f.frameName, x: f.x, y: f.y, width: raw.width, height: f.height ?? raw.height, theme: f.theme, device: f.device, html: `frames/${slug}.html`, image: `frames/${slug}.png`, ...(raw.thumb ? { thumb: `frames/${slug}.thumb.jpg` } : {}), ...(route ? { route } : {}) });
   }
   const manifest: ShareManifest = {
     format: 1,

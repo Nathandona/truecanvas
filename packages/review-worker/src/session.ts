@@ -126,12 +126,17 @@ export const devLinks = (env: ReviewEnv) => env.DEV_SHOW_EMAIL_LINKS === "1" || 
 export async function sendLinkEmail(env: ReviewEnv, to: string, subject: string, intro: string, action: string, link: string): Promise<Sent> {
   const b = brand(env);
   const text = `${intro}\n\n${action}: ${link}\n\n${b.name}`;
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f3f2ef;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#1c1b19">
-<div style="max-width:440px;margin:0 auto;background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:16px;padding:28px">
-<p style="margin:0 0 20px;font-weight:600">${esc(b.name)}</p>
-<p style="margin:0 0 20px;line-height:1.5">${esc(intro)}</p>
-<p style="margin:0 0 20px"><a href="${esc(link)}" style="display:inline-block;background:#1c1b19;color:#fff;text-decoration:none;font-weight:600;padding:10px 16px;border-radius:10px">${esc(action)}</a></p>
-<p style="margin:0;color:#77756f;font-size:13px;line-height:1.5">If the button doesn't work, open this address: ${esc(link)}</p>
+  const logo = b.logo && /^https:\/\//.test(b.logo) ? `<img src="${esc(b.logo)}" alt="" height="28" style="height:28px;width:auto;border-radius:7px;vertical-align:middle;margin-right:10px">` : "";
+  const html = `<!doctype html><html><head><meta name="color-scheme" content="light"></head><body style="margin:0;padding:32px 16px;background:#f3f2ef;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#1c1b19">
+<div style="max-width:460px;margin:0 auto">
+<p style="margin:0 0 18px;text-align:center;font-weight:600;font-size:15px">${logo}${esc(b.name)}</p>
+<div style="background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:16px;padding:32px 28px;box-shadow:0 8px 24px -12px rgba(0,0,0,.12)">
+<h1 style="margin:0 0 10px;font-size:20px;line-height:1.3;letter-spacing:-.015em;font-weight:620">${esc(subject)}</h1>
+<p style="margin:0 0 24px;line-height:1.55;color:#55534e;font-size:15px">${esc(intro)}</p>
+<a href="${esc(link)}" style="display:inline-block;background:#1c1b19;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:10px">${esc(action)}</a>
+<p style="margin:24px 0 0;padding-top:18px;border-top:1px solid rgba(0,0,0,.08);color:#77756f;font-size:12.5px;line-height:1.5">If the button doesn't work, open this address:<br><a href="${esc(link)}" style="color:#77756f;word-break:break-all">${esc(link)}</a></p>
+</div>
+<p style="margin:18px 0 0;text-align:center;color:#a3a19b;font-size:12px">Sent by ${esc(b.name)} with Truecanvas</p>
 </div></body></html>`;
   if (devLinks(env)) console.log(`[review email] to ${to}: ${subject}\n  ${link}`);
   if (env.STUDIO_EMAIL_FROM && env.RESEND_API_KEY) {

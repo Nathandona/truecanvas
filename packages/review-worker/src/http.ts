@@ -105,6 +105,22 @@ button:active, .button:active { transform:scale(.97); }
 .card { position:relative; display:flex; flex-direction:column; background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; text-decoration:none;
   transition:transform .2s var(--ease), box-shadow .2s var(--ease), border-color .2s ease; }
 .card:hover { transform:translateY(-2px); box-shadow:var(--shadow); border-color:var(--line-strong); }
+/* the whole card opens the link; buttons and the invite form sit above it */
+.title::after { content:""; position:absolute; inset:0; border-radius:14px; }
+.title { text-decoration:none; color:inherit; }
+.card:hover .title { text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--line-strong); }
+.copy, .invite { position:relative; z-index:1; }
+.invite { margin-top:10px; }
+.invite summary { list-style:none; display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:8px; font-size:12.5px; font-weight:540; color:var(--text);
+  box-shadow:inset 0 0 0 1px var(--line-strong); cursor:pointer; user-select:none; transition:background-color .15s ease; }
+.invite summary::-webkit-details-marker { display:none; }
+.invite summary:hover, .invite[open] summary { background:var(--field); }
+.invite form { flex-direction:row; gap:6px; margin-top:8px; }
+.invite input { flex:1; min-width:0; font-size:13.5px; padding:7px 10px; }
+.invite button { padding:7px 12px; font-size:13px; }
+.invite .hint { font-size:12px; margin-top:6px; }
+.notice { display:flex; align-items:center; gap:8px; margin-bottom:18px; padding:10px 14px; border-radius:12px; background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow); animation:rise .35s var(--ease) both; }
+.notice svg { color:#16a34a; flex:none; }
 .card.revoked { opacity:.6; }
 .thumb { position:relative; aspect-ratio:16/10; overflow:hidden; border-bottom:1px solid var(--line);
   background:var(--raised) radial-gradient(var(--dot) 1px, transparent 1px) 0 0/14px 14px; }
@@ -112,7 +128,7 @@ button:active, .button:active { transform:scale(.97); }
   transition:transform .35s var(--ease); }
 .card:hover .thumb img { transform:translateX(-50%) translateY(-3%); }
 .thumb .none { position:absolute; inset:0; display:grid; place-items:center; color:var(--faint); font-size:13px; }
-.copy { position:absolute; top:10px; right:10px; padding:0; width:30px; height:30px; border-radius:8px; background:var(--card); color:var(--text); box-shadow:0 0 0 1px var(--line), 0 2px 6px rgba(0,0,0,.08);
+.copy { position:absolute !important; top:10px; right:10px; padding:0; width:30px; height:30px; border-radius:8px; background:var(--card); color:var(--text); box-shadow:0 0 0 1px var(--line), 0 2px 6px rgba(0,0,0,.08);
   opacity:0; transform:translateY(-2px); transition:opacity .15s ease, transform .2s var(--ease); }
 .card:hover .copy, .copy:focus-visible { opacity:1; transform:none; }
 .copy.done { color:#16a34a; opacity:1; }

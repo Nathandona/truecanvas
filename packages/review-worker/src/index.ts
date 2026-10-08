@@ -62,7 +62,7 @@ import {
 export { Room } from "./room";
 
 /** What this site can do beyond the original API. Truecanvas checks it before using them. */
-const features = (env: ReviewEnv) => ["live-url", "room", "batch", ...(env.LIVE_HOST_SUFFIX ? ["live-files", "live-blobs", "session"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
+const features = (env: ReviewEnv) => ["live-url", "room", "batch", "thumbs", ...(env.LIVE_HOST_SUFFIX ? ["live-files", "live-blobs", "session"] : []), ...(signInOn(env) ? ["access", "invites"] : [])];
 
 export default {
   async fetch(req: Request, env: ReviewEnv): Promise<Response> {
