@@ -382,20 +382,31 @@ export class Sessions {
     return this.sessions.get(canvas) ?? null;
   }
 
-  /** Starts (or returns) the canvas's session. The canvas needs a link: share it first. */
-  async start(canvas: string, opts: { name?: string } = {}): Promise<SessionState> {
+  /**
+   * Starts (or returns) the canvas's session. A canvas that has no link yet is
+   * shared first through `opts.share` (invited-only on sites with sign-in), so
+   * going live is one click.
+   */
+  async start(canvas: string, opts: { name?: string; share?: () => Promise<unknown> } = {}): Promise<SessionState> {
     const running = this.sessions.get(canvas);
     if (running && running.state.status !== "stopped") return running.state;
     const site = reviewSite();
     if (!site) throw new Error("No review site yet: connect one with `npx truecanvas share setup`, share the canvas, then start a session.");
     const features = await siteFeatures(site);
     if (!features.includes("session")) throw new Error("This review site doesn't support live sessions yet: deploy the latest review site (packages/review-worker) with LIVE_HOST_SUFFIX set.");
-    const res = await fetch(`${site.url}/api/shares?project=${encodeURIComponent(this.project)}&canvas=${encodeURIComponent(canvas)}`, {
-      headers: { authorization: `Bearer ${site.token}` },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) throw new Error(`Review site: ${res.status} ${res.statusText}`);
-    const { slug } = (await res.json()) as { slug: string | null };
+    const lookup = async () => {
+      const res = await fetch(`${site.url}/api/shares?project=${encodeURIComponent(this.project)}&canvas=${encodeURIComponent(canvas)}`, {
+        headers: { authorization: `Bearer ${site.token}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`Review site: ${res.status} ${res.statusText}`);
+      return ((await res.json()) as { slug: string | null }).slug;
+    };
+    let slug = await lookup();
+    if (!slug && opts.share) {
+      await opts.share();
+      slug = await lookup();
+    }
     if (!slug) throw new Error(`${canvas} has no link yet. Share it once (Share, or \`npx truecanvas share ${canvas}\`), then start a session.`);
     const session = new LiveSession(site, slug, canvas, this.appUrl, {
       name: opts.name ?? "Studio",
