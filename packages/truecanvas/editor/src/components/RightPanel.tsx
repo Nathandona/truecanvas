@@ -22,6 +22,13 @@ export function RightPanel() {
   const openComments = useStore((s) => s.threads.filter((t) => !t.resolved).length);
   return (
     <aside className="panel right">
+      {/* the canvas's actions first, then the panel's tabs: room for who's here and the live timer */}
+      <div className="panel-actions">
+        <SessionButton />
+        <button className="btn primary share-btn" onClick={openShare} title="Share a link with clients">
+          Share
+        </button>
+      </div>
       <div className="panel-head" style={{ paddingLeft: 10 }}>
         <div className="tabs" role="tablist" style={{ flex: 1 }}>
           <button role="tab" aria-selected={tab === "design"} className={`tab${tab === "design" ? " on" : ""}`} onClick={() => useStore.setState({ rightTab: "design" })}>
@@ -37,10 +44,6 @@ export function RightPanel() {
             {unseen > 0 && tab !== "agent" && <span className="count">{unseen}</span>}
           </button>
         </div>
-        <SessionButton />
-        <button className="btn primary share-btn" onClick={openShare} title="Share a link with clients">
-          Share
-        </button>
       </div>
       <div className="scroll">{tab === "design" ? <Design /> : tab === "comments" ? <CommentsTab /> : <AgentTab />}</div>
     </aside>
