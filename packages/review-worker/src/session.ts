@@ -134,10 +134,18 @@ export async function sendLinkEmail(env: ReviewEnv, to: string, subject: string,
 <p style="margin:0;color:#77756f;font-size:13px;line-height:1.5">If the button doesn't work, open this address: ${esc(link)}</p>
 </div></body></html>`;
   if (devLinks(env)) console.log(`[review email] to ${to}: ${subject}\n  ${link}`);
-  if (env.EMAIL && env.STUDIO_EMAIL_FROM) {
+  if (env.STUDIO_EMAIL_FROM && env.RESEND_API_KEY) {
+    // Resend's HTTP API: free for small volumes, any recipient
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: `${b.name.replace(/["<>]/g, "")} <${env.STUDIO_EMAIL_FROM}>`, to: [to], subject, text, html }),
+    });
+    if (!res.ok) throw new Error(`The email couldn't be sent (Resend ${res.status}: ${(await res.text()).slice(0, 200)}).`);
+  } else if (env.EMAIL && env.STUDIO_EMAIL_FROM) {
     await env.EMAIL.send({ to, from: { email: env.STUDIO_EMAIL_FROM, name: b.name }, subject, text, html });
   } else if (!devLinks(env)) {
-    throw new Error("Emails can't be sent: set STUDIO_EMAIL_FROM and the EMAIL binding (Email Service).");
+    throw new Error("Emails can't be sent: set STUDIO_EMAIL_FROM, and RESEND_API_KEY or the EMAIL binding (Email Service).");
   }
   return { to, ...(devLinks(env) ? { link } : {}) };
 }

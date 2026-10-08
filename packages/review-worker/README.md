@@ -33,13 +33,15 @@ Cloudflare's free plan covers it (Workers, D1, R2 up to 10 GB) and allows commer
    npx wrangler secret put REVIEW_TOKEN -c wrangler.local.jsonc
    ```
    **3b. Sign-in.**
-   - In `wrangler.local.jsonc`, set `STUDIO_EMAILS` (the owners, comma separated) and `STUDIO_EMAIL_FROM` (e.g. `review@your-studio.com`), and keep the `send_email` binding.
-   - Onboard your domain to Email Service, which adds its sending records (SPF and DKIM) to your DNS, then check them:
-     ```sh
-     npx wrangler email sending enable your-studio.com
-     npx wrangler email sending dns get your-studio.com
-     ```
-     If your domain already has an SPF record for another mail provider, keep a single SPF record that includes both.
+   - In `wrangler.local.jsonc`, set `STUDIO_EMAILS` (the owners, comma separated) and `STUDIO_EMAIL_FROM` (e.g. `review@your-studio.com`).
+   - Pick how emails are sent:
+     - **Resend** (free up to 3,000 emails a month): add your domain in Resend, add the DNS records it shows, then store an API key that can send:
+       ```sh
+       npx wrangler secret put RESEND_API_KEY -c wrangler.local.jsonc
+       ```
+     - **Cloudflare Email Service** (sending to any address needs the Workers Paid plan): keep the `send_email` binding, onboard your domain under **Email Service → Email Sending** in the dashboard, and check its records with `npx wrangler email sending dns get your-studio.com`.
+
+     Both put their sending records on a subdomain, so an existing mail provider's SPF record isn't affected.
    - A secret of 32+ random characters that signs sessions:
      ```sh
      openssl rand -hex 32 | npx wrangler secret put BETTER_AUTH_SECRET -c wrangler.local.jsonc

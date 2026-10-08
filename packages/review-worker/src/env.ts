@@ -15,8 +15,10 @@ export interface ReviewEnv {
   STUDIO_EMAILS?: string;
   /** sign-in and invitation emails come from this address, on a domain onboarded to Email Service */
   STUDIO_EMAIL_FROM?: string;
-  /** Email Service binding */
+  /** Email Service binding (sending to any recipient needs the Workers Paid plan) */
   EMAIL?: SendEmail;
+  /** or a Resend API key (secret): emails go through Resend's API instead */
+  RESEND_API_KEY?: string;
   /** local development: show sign-in links on the page and in API answers instead of only emailing them */
   DEV_SHOW_EMAIL_LINKS?: string;
 }
