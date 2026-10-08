@@ -14,9 +14,9 @@
   "desktopName": "truecanvas-desktop.desktop",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "stage": "node scripts/stage.mjs",
+    "stage-runtime": "node scripts/stage.mjs",
     "start": "pnpm build && electron .",
-    "dist": "pnpm build && pnpm stage && electron-builder --linux --publish never",
+    "dist": "pnpm run build && pnpm run stage-runtime && electron-builder --linux --publish never",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

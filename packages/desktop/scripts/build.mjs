@@ -1,6 +1,6 @@
 // Bundles the main process and the preload script into dist/. Electron and the
 // truecanvas package stay outside: Electron is the runtime, and truecanvas is
-// loaded at run time from the app's resources (see stage.mjs).
+// loaded at run time from the app's resources (see stage.mjs, run by `pnpm run stage-runtime`).
 import { build } from "esbuild";
 import fs from "node:fs";
 
