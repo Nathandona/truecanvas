@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, Globe, LoaderCircle, Lock, Mail, MonitorPlay, Users } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, LoaderCircle, Lock, Mail, MonitorPlay, Radio, Users } from "lucide-react";
 import { api, type LinkInfo, type ShareAccess, type ShareResult } from "../lib/api";
 import { useStore } from "../lib/store";
 import { ago } from "../lib/time";
 import { Select, Switch } from "./controls";
 import { Dialog } from "./Dialog";
+import { startLiveSession } from "./LiveSession";
 
 /*
  * Share: the canvas's frames rendered by the app and published to the
@@ -300,7 +301,48 @@ function Share({ canvas }: { canvas: string }) {
           {link ? `Publish version ${link.versions + 1}` : "Create link"}
         </button>
       </div>
+      <LiveSection canvas={canvas} onStarted={close} />
     </Dialog>
+  );
+}
+
+/** Working together in real time: the link shows the canvas live from the app while you edit. */
+function LiveSection({ canvas, onStarted }: { canvas: string; onStarted: () => void }) {
+  const session = useStore((s) => s.sessions[canvas]);
+  const on = !!session && session.status !== "stopped";
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<unknown>, after?: () => void) => {
+    setBusy(true);
+    try {
+      await fn();
+      after?.();
+    } catch (err) {
+      useStore.getState().toast((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="share-live">
+      <Radio size={15} className="share-option-icon" />
+      <span>
+        <b>{on ? "Live session running" : "Live session"}</b>
+        <span className="faint">
+          {on
+            ? "People with access to the link see your edits as you make them. End it when you're done."
+            : "On a call with your client? They see your edits as you make them, with everyone's cursors, on the same link. It runs until you end it."}
+        </span>
+      </span>
+      {on ? (
+        <button className="btn danger" disabled={busy} onClick={() => void run(() => api.stopSession(canvas))}>
+          End
+        </button>
+      ) : (
+        <button className="btn outline" disabled={busy} onClick={() => void run(() => startLiveSession(canvas), onStarted)}>
+          {busy && <LoaderCircle size={13} className="spin-working" />} Start
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Copy, LoaderCircle, Radio } from "lucide-react";
+import { Copy } from "lucide-react";
 import { api } from "../lib/api";
 import { useStore, type Camera } from "../lib/store";
 
@@ -28,11 +28,17 @@ function elapsed(since: number) {
   return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** Starts a live session on a canvas (from the Share dialog); throws with a message to show. */
+export async function startLiveSession(canvas: string) {
+  const { session } = await api.startSession(canvas);
+  useStore.setState((st) => ({ sessions: { ...st.sessions, [canvas]: session } }));
+  useStore.getState().toast("You're live: people with access to the link follow this canvas as you edit it.", "info");
+}
+
 /*
- * Off: "Live" with a broadcast icon opens a short explanation and Start.
- * On: a red pill with a timer and who's here; it opens the link, Copy link
- * and End session. Same pattern as a presentation or an open session in
- * other design tools: say what will happen before it does, then make the
+ * A session starts from the Share dialog. While one runs, a red pill next to
+ * Share shows it with a timer and who's here; it opens the link, Copy link
+ * and End session. Nothing when no session runs: one Share button, the
  * running state impossible to miss.
  */
 export function SessionButton() {
@@ -52,21 +58,8 @@ export function SessionButton() {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [on]);
-  if (!canvas) return null;
+  if (!canvas || !on) return null;
 
-  const start = async () => {
-    setBusy(true);
-    try {
-      const { session: s } = await api.startSession(canvas);
-      useStore.setState((st) => ({ sessions: { ...st.sessions, [canvas]: s } }));
-      setOpen(false);
-      useStore.getState().toast("You're live: people with access to the link follow this canvas as you edit it.", "info");
-    } catch (e) {
-      useStore.getState().toast((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
   const stop = async () => {
     setBusy(true);
     try {
@@ -82,7 +75,7 @@ export function SessionButton() {
   const waiting = on && session.status !== "live";
   return (
     <div className="session">
-      {on && people.length > 0 && (
+      {people.length > 0 && (
         <div className="session-faces" aria-label={`${people.map((p) => p.name).join(", ")} here`}>
           {people.slice(0, 3).map((p) => (
             <span key={p.id} className="session-face" style={{ background: p.color }} title={p.name}>
@@ -94,44 +87,19 @@ export function SessionButton() {
       )}
       <button
         ref={btn}
-        className={`btn session-btn${on ? " on" : ""}${waiting ? " waiting" : ""}`}
+        className={`btn session-btn on${waiting ? " waiting" : ""}`}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title={on ? "Live session" : "Start a live session"}
+        title="Live session"
       >
-        {on ? <span className="session-dot" aria-hidden /> : <Radio size={13} aria-hidden />}
-        {on ? (waiting ? "Connecting" : "Live") : "Live"}
-        {on && !waiting && <span className="session-time">{elapsed(startedAt[canvas]!)}</span>}
+        <span className="session-dot" aria-hidden />
+        {waiting ? "Connecting" : "Live"}
+        {!waiting && <span className="session-time">{elapsed(startedAt[canvas]!)}</span>}
       </button>
       {open && btn.current && (
         <SessionPopover anchor={btn.current} onClose={() => setOpen(false)}>
-          {!on ? (
-            <>
-              <div className="session-pop-title">
-                <Radio size={14} aria-hidden /> Start a live session
-              </div>
-              <p className="session-pop-text">
-                The people who can open <b>{canvas}</b>’s share link see your real components update as you edit, with your cursor and theirs. Their comments arrive
-                instantly.
-              </p>
-              <ul className="session-pop-points">
-                <li>Only people with access to the link: the ones you invited, and your studio.</li>
-                <li>No link yet? It’s created when you start, for invited people only.</li>
-                <li>It runs until you end it or close Truecanvas. Otherwise they see the last published version.</li>
-              </ul>
-              <div className="session-pop-actions">
-                <button className="btn" onClick={() => setOpen(false)}>
-                  Cancel
-                </button>
-                <button className="btn primary" onClick={() => void start()} disabled={busy}>
-                  {busy ? <LoaderCircle size={13} className="spin-working" /> : null}
-                  Start
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
+          <>
               <div className="session-pop-title live">
                 <span className="session-dot" aria-hidden /> {waiting ? "Connecting…" : "Live"}
                 {!waiting && <span className="session-time">{elapsed(startedAt[canvas]!)}</span>}
@@ -169,8 +137,7 @@ export function SessionButton() {
                   End session
                 </button>
               </div>
-            </>
-          )}
+          </>
         </SessionPopover>
       )}
     </div>
