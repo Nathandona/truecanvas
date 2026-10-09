@@ -148,7 +148,7 @@ npx truecanvas shot home --frame Pricing --format 1:1
 npx truecanvas shot home --all                   # every saved shot again
 ```
 
-**Video**: switch the dialog to Video and the frame is your page itself, live: **Reveal** (it rises into place while its own animations play), **Scroll** (it scrolls like a visitor would, scroll animations included: it eases in, cruises at one speed and eases out, and its distance, speed and length stay linked) or **Drift** (a slow push in), 3 to 15 seconds, with the shader backdrop moving gently. The preview plays in the dialog; **Export video** records it frame by frame on a virtual clock, so every frame is exact however busy the machine is, and encodes a 30 fps MP4 at the format's size (about 10 seconds of rendering per second of video). It needs `ffmpeg` (`npx truecanvas doctor` checks); without one with H.264, Playwright's ffmpeg writes WebM.
+**Video**: switch the dialog to Video and the frame is your page itself, live: **Reveal** (it rises into place while its own animations play), **Scroll** (it scrolls like a visitor would, scroll animations included: it eases in, cruises at one speed and eases out, and its distance, speed and length stay linked) or **Drift** (a slow push in), 3 to 15 seconds, with the shader backdrop moving gently. The preview plays in the dialog; **Export video** records it frame by frame on a virtual clock, so every frame is exact however busy the machine is, and encodes a 60 fps MP4 at the format's size (30 fps renders twice as fast; about 10 to 20 seconds of rendering per second of video). It needs `ffmpeg` (`npx truecanvas doctor` checks); without one with H.264, Playwright's ffmpeg writes WebM.
 
 ```bash
 npx truecanvas shot home --frame Home --video --motion scroll --duration 8

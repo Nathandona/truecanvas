@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { findDevice } from "../core/devices.js";
-import { captureHeight, normalizeShot, SHOT_FORMATS, SHOT_FPS, shotPoseAt, type Shot } from "../core/shot-model.js";
+import { captureHeight, normalizeShot, SHOT_FORMATS, shotPoseAt, type Shot } from "../core/shot-model.js";
 import { findEncoder, NO_ENCODER, startEncoder } from "./video.js";
 import type { Workspace } from "../core/workspace.js";
 import type { Screenshotter } from "./screenshot.js";
@@ -107,22 +107,24 @@ export class ShotService {
     const live = { src: this.liveSrc(canvas, shot), width: f.width, height: visible };
     const id = crypto.randomBytes(9).toString("base64url");
     this.jobs.set(id, { shot, key, expires: Date.now() + 30 * 60_000, live });
-    const frames = Math.round(shot.motion.duration * SHOT_FPS);
+    const fps = shot.motion.fps;
+    const frames = Math.round(shot.motion.duration * fps);
     const { width, height } = SHOT_FORMATS[shot.format];
     // videos post at the format's size; odd sizes don't encode
     const size = { width: width - (width % 2), height: height - (height % 2) };
-    const encoder = startEncoder(enc, SHOT_FPS);
+    const encoder = startEncoder(enc, fps);
     const appOrigin = new URL(this.ws.config.appUrl).origin;
     this.progress.set(canvas, { done: 0, total: frames });
     try {
       await this.shots.record(`${this.origin()}/shot.html?job=${id}`, size, {
         frames,
-        fps: SHOT_FPS,
+        fps,
         image: enc.frames,
         isApp: (u) => u.startsWith(appOrigin) && u.includes("/truecanvas/"),
         at: (i) => {
-          const t = i / SHOT_FPS;
-          return { t, scroll: shotPoseAt(shot, t).scroll };
+          const t = i / fps;
+          // whole pixels for the page; the compositor shifts the frame by what's left, so the motion stays even
+          return { t, scroll: Math.floor(shotPoseAt(shot, t).scroll) };
         },
         onFrame: async (img, i) => {
           await encoder.write(img);

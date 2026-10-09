@@ -69,6 +69,8 @@ export interface ShotMotion {
   scrollDistance: number;
   /** scroll: its cruising speed, in the frame's px per second (distance, speed and duration stay linked) */
   scrollSpeed: number;
+  /** frames per second: 60 (smooth scrolls, the most X and LinkedIn play) or 30 (half the rendering) */
+  fps: 30 | 60;
 }
 
 /** Scroll speeds offered, px per second: calm enough to read, quick enough to keep attention. */
@@ -198,6 +200,7 @@ export function normalizeShot(input: unknown): Shot {
       backdropMotion: typeof m.backdropMotion === "boolean" ? m.backdropMotion : true,
       scrollDistance: Math.round(clamp(m.scrollDistance, 200, 12_000, 2400)),
       scrollSpeed: Math.round(clamp(m.scrollSpeed, 120, 2000, 520)),
+      fps: m.fps === 30 ? 30 : 60,
     },
     updatedAt: typeof x.updatedAt === "number" ? x.updatedAt : Date.now(),
   };
@@ -239,8 +242,8 @@ export function shotLayout(shot: Shot, img: { width: number; height: number }) {
   return { W, H, left, top, boxW, boxH, imgW: w, imgH: h, k, chromeTop, bezel };
 }
 
-/** Frames per second of exported videos. */
-export const SHOT_FPS = 30;
+/** Frames per second of exported videos, by default. */
+export const SHOT_FPS = 60;
 
 /** Where everything is at time `t` (seconds) of a video shot: the compositor and the recorder both read this. */
 export interface ShotPose {

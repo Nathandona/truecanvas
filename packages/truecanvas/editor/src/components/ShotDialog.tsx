@@ -56,6 +56,8 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
   const [liveSrc, setLiveSrc] = useState<string | null>(null);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  // Date.now() at the preview's time 0 while playing: the page scrolls itself along the same clock
+  const [playingSince, setPlayingSince] = useState<number | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const toast = useStore((s) => s.toast);
 
@@ -111,6 +113,7 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
     if (!playing) return;
     let raf = 0;
     const start = performance.now() - time * 1000;
+    setPlayingSince(Date.now() - time * 1000);
     const tick = (now: number) => {
       const t = (now - start) / 1000;
       if (t >= duration + 0.8) {
@@ -124,7 +127,10 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      setPlayingSince(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, duration]);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -220,7 +226,7 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
     })} />} width={1180} onClose={close}>
       <div className="shot">
         <div className="shot-left" ref={previewRef}>
-          <Preview shot={shot} image={image} busy={capturing && !video} live={video && liveSrc && image ? { src: liveSrc, width: image.width, height: liveHeight(shot, image) } : null} time={video ? time : 0} />
+          <Preview shot={shot} image={image} busy={capturing && !video} playingSince={playingSince} live={video && liveSrc && image ? { src: liveSrc, width: image.width, height: liveHeight(shot, image) } : null} time={video ? time : 0} />
           {video && (
             <div className="shot-play">
               <button className="icon-btn" onClick={() => (playing ? setPlaying(false) : time >= duration ? replayAndPlay() : time === 0 ? replayAndPlay() : setPlaying(true))} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"}>
@@ -298,6 +304,17 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
                   </div>
                 </>
               )}
+              <div className="shot-row">
+                <span className="shot-label">Smoothness</span>
+                <Segmented
+                  value={String(shot.motion.fps)}
+                  options={[
+                    { value: "60", label: "60 fps" },
+                    { value: "30", label: "30 fps" },
+                  ]}
+                  onChange={(v) => update((s) => ({ ...s, motion: { ...s.motion, fps: v === "30" ? 30 : 60 } }))}
+                />
+              </div>
               <Range
                 label="Length"
                 value={shot.motion.duration}
@@ -493,7 +510,7 @@ function ShotTitle({ frame, shots, shot, onPick, onNew, onDelete }: { frame: str
 }
 
 /** The compositor scaled to fit, exactly as it exports. */
-function Preview({ shot, image, busy, live, time }: { shot: Shot; image: ShotImage | null; busy: boolean; live: ShotLive | null; time: number }) {
+function Preview({ shot, image, busy, live, time, playingSince }: { shot: Shot; image: ShotImage | null; busy: boolean; live: ShotLive | null; time: number; playingSince: number | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 600, h: 600 });
   useEffect(() => {
@@ -508,7 +525,7 @@ function Preview({ shot, image, busy, live, time }: { shot: Shot; image: ShotIma
     <div className="shot-preview" ref={ref}>
       <div className="shot-canvas" style={{ width: width * k, height: height * k }}>
         <div style={{ width, height, transform: `scale(${k})`, transformOrigin: "0 0" }}>
-          <ShotStage shot={shot} image={image} live={live} time={time} scrollByMessage />
+          <ShotStage shot={shot} image={image} live={live} time={time} scrollByMessage playingSince={playingSince} />
         </div>
       </div>
       {busy && (

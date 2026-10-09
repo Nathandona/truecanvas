@@ -1,5 +1,6 @@
 import { Component, Suspense, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { HostContext } from "./index.js";
+import { normalizeShot, shotPoseAt } from "../core/shot-model.js";
 
 export interface DarkModeConfig {
   strategy: "class" | "attribute";
@@ -435,6 +436,11 @@ function applyHidden() {
 }
 
 let playing = false;
+let scrollPlay = 0;
+function stopScrollPlay() {
+  if (scrollPlay) (realCancel ?? cancelAnimationFrame)(scrollPlay);
+  scrollPlay = 0;
+}
 
 function startBridge({ frame, setTheme, replay }: { frame: string | null; setTheme: (t: Theme) => void; replay: () => void }) {
   if (window.parent === window || !editorOrigin) return;
@@ -481,7 +487,21 @@ function startBridge({ frame, setTheme, replay }: { frame: string | null; setThe
         break;
       case "tc:scroll":
         // a shot's video preview scrolls the page (overflow stays hidden: no scrollbar in the picture)
+        stopScrollPlay();
         document.documentElement.scrollTop = Number(msg.y) || 0;
+        break;
+      case "tc:scrollplay":
+        // playing: the page scrolls itself along the shot's timeline, frame by frame with its own paint
+        stopScrollPlay();
+        if (!msg.stop && msg.shot) {
+          const shot = normalizeShot(msg.shot);
+          const since = Number(msg.startedAt) || Date.now();
+          const tick = () => {
+            document.documentElement.scrollTop = shotPoseAt(shot, (Date.now() - since) / 1000).scroll;
+            scrollPlay = raf(tick);
+          };
+          tick();
+        }
         break;
     }
   };

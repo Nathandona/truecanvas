@@ -100,6 +100,7 @@ export function ShotStage({
   live,
   time = 0,
   scrollByMessage,
+  playingSince,
   onReady,
 }: {
   shot: Shot;
@@ -110,16 +111,31 @@ export function ShotStage({
   time?: number;
   /** preview: scroll the live page by message (the recorder scrolls it directly) */
   scrollByMessage?: boolean;
+  /** preview: when it started playing (Date.now() at time 0), null when paused */
+  playingSince?: number | null;
   onReady?: () => void;
 }) {
   const media = live ?? image;
   const L = shotLayout(shot, media ?? { width: 1440, height: 900 });
   const pose = shotPoseAt(shot, time);
   const iframe = useRef<HTMLIFrameElement>(null);
+  // the preview: while playing, the page scrolls itself along the same timeline (smooth, in step with its own
+  // frames); paused or scrubbed, it's put where the time says
+  const playing = scrollByMessage && playingSince !== null && playingSince !== undefined;
   useEffect(() => {
     if (!scrollByMessage || !live) return;
+    const w = iframe.current?.contentWindow;
+    if (!w) return;
+    if (playing) w.postMessage({ type: "tc:scrollplay", shot, startedAt: playingSince }, "*");
+    else w.postMessage({ type: "tc:scrollplay", stop: true }, "*");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollByMessage, live, playing, playingSince, shot.motion]);
+  useEffect(() => {
+    if (!scrollByMessage || !live || playing) return;
     iframe.current?.contentWindow?.postMessage({ type: "tc:scroll", y: Math.round(pose.scroll) }, "*");
-  }, [scrollByMessage, live, pose.scroll]);
+  }, [scrollByMessage, live, playing, pose.scroll]);
+  // recording: the page scrolls by whole pixels, the frame moves by the rest
+  const subpixel = live && !scrollByMessage ? pose.scroll - Math.floor(pose.scroll) : 0;
   const f = shot.framing;
   const [loaded, setLoaded] = useState(false);
   const reported = useRef(false);
@@ -165,7 +181,17 @@ export function ShotStage({
               title="Frame"
               scrolling="no"
               onLoad={() => setLoaded(true)}
-              style={{ position: "absolute", left: 0, top: 0, width: live.width, height: live.height, border: 0, transform: `scale(${L.k})`, transformOrigin: "0 0", background: "#fff" }}
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                width: live.width,
+                height: live.height + 2,
+                border: 0,
+                transform: `translateY(${(-subpixel * L.k).toFixed(3)}px) scale(${L.k})`,
+                transformOrigin: "0 0",
+                background: "#fff",
+              }}
             />
           ) : image && (
             <img

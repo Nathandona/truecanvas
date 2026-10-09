@@ -14,6 +14,10 @@ test("a shot is completed and made safe from any input", () => {
   assert.equal(s.framing.tilt, 20);
   assert.equal(s.framing.chrome, "none");
   assert.match(s.id, /^[a-z0-9]+$/);
+  // videos: 60 fps unless 30 is asked for
+  assert.equal(s.motion.fps, 60);
+  assert.equal(normalizeShot({ motion: { fps: 30 } }).motion.fps, 30);
+  assert.equal(normalizeShot({ motion: { fps: 120 } }).motion.fps, 60);
 });
 
 test("the frame fits the format, centered or off the edge", () => {
