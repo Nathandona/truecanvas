@@ -1,6 +1,6 @@
 {
   "name": "create-truecanvas",
-  "version": "0.6.9",
+  "version": "0.7.0",
   "description": "Create a Next.js or Vite app with Truecanvas set up: npm create truecanvas",
   "license": "MIT",
   "type": "module",
