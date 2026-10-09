@@ -57,8 +57,28 @@ export interface ShotCrop {
   height: number;
 }
 
+/** How a video shot moves. */
+export interface ShotMotion {
+  /** reveal: the frame rises into place while its own animations play; scroll: the page scrolls like a visitor would; drift: a slow push in */
+  template: "reveal" | "scroll" | "drift";
+  /** seconds */
+  duration: number;
+  /** the shader backdrop drifts gently */
+  backdropMotion: boolean;
+  /** scroll: how far down the page goes, in the frame's px */
+  scrollDistance: number;
+}
+
+export const SHOT_MOTIONS: { value: ShotMotion["template"]; label: string; hint: string }[] = [
+  { value: "reveal", label: "Reveal", hint: "The design rises into place while its own animations play" },
+  { value: "scroll", label: "Scroll", hint: "The page scrolls like a visitor would, scroll animations included" },
+  { value: "drift", label: "Drift", hint: "A slow push in on the design" },
+];
+
 export interface Shot {
   id: string;
+  /** an image (PNG) or a video (MP4) */
+  kind: "image" | "video";
   /** the frame's name in the canvas */
   frame: string;
   format: ShotFormat;
@@ -67,6 +87,7 @@ export interface Shot {
   framing: ShotFraming;
   /** 1 or 2 (2: sharp on retina screens) */
   scale: 1 | 2;
+  motion: ShotMotion;
   updatedAt: number;
 }
 
@@ -93,9 +114,11 @@ export function normalizeShot(input: unknown): Shot {
   const b = (x.backdrop ?? {}) as Partial<ShotBackdrop>;
   const f = (x.framing ?? {}) as Partial<ShotFraming>;
   const c = (x.crop ?? {}) as Partial<ShotCrop>;
+  const m = (x.motion ?? {}) as Partial<ShotMotion>;
   const colors = Array.isArray(b.colors) ? b.colors.filter(isColor).slice(0, 5) : [];
   return {
     id: typeof x.id === "string" && /^[a-z0-9-]{1,40}$/i.test(x.id) ? x.id : newShotId(),
+    kind: oneOf(x.kind, ["image", "video"] as const, "image"),
     frame: typeof x.frame === "string" ? x.frame.slice(0, 120) : "",
     format: oneOf(x.format, Object.keys(SHOT_FORMATS) as ShotFormat[], "4:5"),
     crop: { mode: oneOf(c.mode, ["top", "full"] as const, "top"), height: Math.round(clamp(c.height, 200, 8000, 1100)) },
@@ -116,6 +139,12 @@ export function normalizeShot(input: unknown): Shot {
       position: oneOf(f.position, ["center", "bleed"] as const, "center"),
     },
     scale: x.scale === 1 ? 1 : 2,
+    motion: {
+      template: oneOf(m.template, ["reveal", "scroll", "drift"] as const, "reveal"),
+      duration: Math.round(clamp(m.duration, 3, 20, 7) * 10) / 10,
+      backdropMotion: typeof m.backdropMotion === "boolean" ? m.backdropMotion : true,
+      scrollDistance: Math.round(clamp(m.scrollDistance, 200, 12_000, 2400)),
+    },
     updatedAt: typeof x.updatedAt === "number" ? x.updatedAt : Date.now(),
   };
 }
@@ -154,4 +183,48 @@ export function shotLayout(shot: Shot, img: { width: number; height: number }) {
   // bleed: the frame always runs past the bottom edge (a short one sits lower)
   const top = bleed ? Math.max(pad, Math.round(H - boxH * 0.86)) : Math.round((H - boxH) / 2);
   return { W, H, left, top, boxW, boxH, imgW: w, imgH: h, k, chromeTop, bezel };
+}
+
+/** Frames per second of exported videos. */
+export const SHOT_FPS = 30;
+
+/** Where everything is at time `t` (seconds) of a video shot: the compositor and the recorder both read this. */
+export interface ShotPose {
+  /** the frame box */
+  opacity: number;
+  /** px, in the format's space */
+  y: number;
+  scale: number;
+  /** extra rotateX in degrees, on top of the shot's tilt */
+  lift: number;
+  /** px scrolled inside the frame, in the frame's own px */
+  scroll: number;
+  /** the shader's time, for a moving backdrop */
+  shaderTime: number;
+}
+
+const easeOut = (p: number) => 1 - (1 - p) ** 3;
+const easeOutExpo = (p: number) => (p >= 1 ? 1 : 1 - 2 ** (-10 * p));
+const easeInOut = (p: number) => (p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2);
+const part = (t: number, from: number, to: number) => Math.min(1, Math.max(0, (t - from) / (to - from)));
+
+export function shotPoseAt(shot: Shot, t: number): ShotPose {
+  const m = shot.motion;
+  const d = m.duration;
+  const shaderTime = m.backdropMotion ? t * 0.35 : 0;
+  if (shot.kind !== "video") return { opacity: 1, y: 0, scale: 1, lift: 0, scroll: 0, shaderTime: 0 };
+  if (m.template === "reveal") {
+    // rises in over 1.4 s, then settles with a slow push in
+    const p = easeOutExpo(part(t, 0.15, 1.55));
+    return { opacity: Math.min(1, part(t, 0.15, 0.9) * 1.2), y: (1 - p) * 140, scale: 0.94 + 0.06 * p + 0.02 * easeInOut(part(t, 1.55, d)), lift: (1 - p) * 9, scroll: 0, shaderTime };
+  }
+  if (m.template === "scroll") {
+    // a beat on the top of the page, the scroll, a beat at the end
+    const fade = easeOut(part(t, 0, 0.5));
+    const s = easeInOut(part(t, 0.9, Math.max(1.4, d - 0.9)));
+    return { opacity: fade, y: (1 - fade) * 24, scale: 1, lift: 0, scroll: s * m.scrollDistance, shaderTime };
+  }
+  // drift: a slow push in
+  const fade = easeOut(part(t, 0, 0.5));
+  return { opacity: fade, y: (1 - fade) * 24 - easeInOut(part(t, 0, d)) * 30, scale: 1 + 0.1 * easeInOut(part(t, 0, d)), lift: 0, scroll: 0, shaderTime };
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import { loadConfig } from "../core/config.js";
 import { configStatus } from "../core/init.js";
 import { findChromium } from "../server/screenshot.js";
+import { findEncoder, NO_ENCODER } from "../server/video.js";
 import { depVersion, detectPm, hasAgentConfig, installedIn, readPackage, runScript } from "./setup.js";
 
 export interface Check {
@@ -72,6 +73,13 @@ export async function doctor(root: string, cliVersion: string): Promise<Check[]>
 
   const chrome = findChromium();
   add(chrome ? { label: "Screenshots", status: "ok", detail: path.basename(chrome) } : { label: "Screenshots", status: "warn", detail: "no Chromium found", fix: "npx playwright install chromium-headless-shell  (or install Chrome)" });
+  // shot videos: MP4 needs an ffmpeg with H.264; Playwright's own only writes WebM
+  const enc = findEncoder();
+  add(
+    enc?.ext === "mp4"
+      ? { label: "Shot videos", status: "ok", detail: `MP4 with ${path.basename(enc.bin)}` }
+      : { label: "Shot videos", status: "warn", detail: enc ? "WebM only (Playwright's ffmpeg)" : "no ffmpeg", fix: NO_ENCODER },
+  );
 
   const git = await has("git", ["rev-parse", "--is-inside-work-tree"], root);
   add(git ? { label: "Git", status: "ok" } : { label: "Git", status: "warn", detail: "not a repository", fix: "git init  (branches, history, comments and compare use git)" });

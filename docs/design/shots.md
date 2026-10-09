@@ -47,6 +47,16 @@ app (next dev)                    Truecanvas server                         edit
 - **Colors**: palettes from the frame itself (sampled in the browser, saturated colors weighted over large neutral surfaces), from the Tailwind theme (saturated and distinct ones, darkest first), and hand-picked ones.
 - **Shaders are still images**: `speed` 0; the seed picks the moment (animated shaders) or the angle (static ones), so Shuffle gives a new variation and the same settings give the same image.
 
-## Next: video
+## Video
 
-The same pieces carry over: the compositor loads the live frame (an iframe of the page, like share links' real site) instead of an image, the camera animates the shot's settings over time, frames are captured one by one with a controlled clock, and ffmpeg (installed with Playwright) encodes the MP4. Backdrops, framing, formats and `.shots.json` stay as they are.
+Built 2026-10-09. A shot with `kind: "video"` and a `motion` (`reveal`, `scroll` or `drift`, a duration, a moving backdrop, a scroll distance) exports as a 30 fps MP4 at the format's size.
+
+- **The page is live**: the compositor loads the app's frame route in an iframe (`ShotService.liveSrc`, the same URL the editor uses) instead of the captured image. Its viewport is what the shot shows; for Scroll, a screen of the page.
+- **One timeline**: `shotPoseAt(shot, t)` in the shared model gives the frame box's opacity, offset, scale and lift, the page's scroll and the shader's time. The dialog's preview and the recorder both read it, so the preview moves like the export.
+- **Frame-exact recording** (`Screenshotter.record`): Playwright's clock is installed on the context, so timers, `requestAnimationFrame` and `performance.now` stand still in every frame of the page, the app's included; an init script pauses CSS and Web Animations and moves them to the virtual time at each step. For each frame: the compositor's time (`__tcSetTime`, synchronous), the app's scroll and animations, `clock.runFor(1/30 s)`, a screenshot piped to ffmpeg. However slow the machine, the video plays at the right speed.
+- **Scroll without a scrollbar**: the frame keeps `overflow: hidden` and is scrolled from code; the editor's preview sends `tc:scroll` to the app's runtime.
+- **Encoding** (`server/video.ts`): the system's ffmpeg with libx264 (or `TRUECANVAS_FFMPEG`) writes H.264 MP4, what X and LinkedIn take; otherwise Playwright's ffmpeg writes WebM. `truecanvas doctor` says which.
+- **Speed**: about 4 frames a second on a laptop without a GPU. WebGL is software-rendered there, so in videos the shader draws at a fraction of the pixels; it's a soft blur under grain, and the difference doesn't show.
+- **Agents**: `make_shot` with `video` records it and returns a frame of the video to check.
+
+Next: camera moves between several frames, captions, and a fake cursor that clicks through a flow.

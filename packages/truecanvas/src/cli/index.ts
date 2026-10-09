@@ -50,6 +50,8 @@ Usage
                        Uses the frame's saved shot (made in the editor's Shot dialog), else a new one:
                        --frame <name>, --id <shot>, --format 4:5|1:1|16:9|9:16|3:2, --out <file.png>,
                        --all: export every saved shot of the canvas again (after design changes)
+                       --video: an MP4 instead (--motion reveal|scroll|drift, --duration <seconds>); video shots
+                         made in the editor export as video on their own. Videos need ffmpeg.
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
 Options
@@ -163,6 +165,9 @@ async function main() {
       format: { type: "string" },
       out: { type: "string" },
       all: { type: "boolean" },
+      video: { type: "boolean" },
+      motion: { type: "string" },
+      duration: { type: "string" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -279,7 +284,7 @@ async function main() {
     console.log(`\n  Next: ${c.accent("npm run canvas")} ${c.dim("(starts your app and the editor)")}\n`);
     return;
   }
-  if (command === "shot") return shotCommand(config.port, positionals[1], values);
+  if (command === "shot") return shotCommand(config.port, positionals[1], { ...values, duration: values.duration ? Number(values.duration) : undefined });
 
   if (command === "share") {
     // setup: connect the studio's review site (URL + token from its environment variables)
@@ -696,7 +701,11 @@ main().catch((err) => {
 });
 
 /** `truecanvas shot`: exports shots through the running Truecanvas (it owns the browser and the compositor). */
-async function shotCommand(port: number, canvasArg: string | undefined, values: { frame?: string; id?: string; format?: string; out?: string; all?: boolean }) {
+async function shotCommand(
+  port: number,
+  canvasArg: string | undefined,
+  values: { frame?: string; id?: string; format?: string; out?: string; all?: boolean; video?: boolean; motion?: string; duration?: number },
+) {
   const base = `http://localhost:${port}`;
   const post = (route: string, body: unknown) => fetch(`${base}${route}`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify(body) });
   const state = await fetch(`${base}/api/state`).then((r) => (r.ok ? (r.json() as Promise<{ canvases: string[] }>) : null)).catch(() => null);
@@ -719,9 +728,15 @@ async function shotCommand(port: number, canvasArg: string | undefined, values: 
       process.exit(1);
     }
     let shot = found ?? newShot(values.frame!);
-    if (values.format) shot = normalizeShot({ ...shot, format: values.format });
+    const asVideo = values.video || values.motion || values.duration;
+    if (values.format || asVideo)
+      shot = normalizeShot({
+        ...shot,
+        ...(values.format ? { format: values.format } : {}),
+        ...(asVideo ? { kind: "video", motion: { ...shot.motion, ...(values.motion ? { template: values.motion } : {}), ...(values.duration ? { duration: values.duration } : {}) } } : {}),
+      });
     // a new or changed shot is saved, so it can be exported again later
-    if (!found || values.format) shot = ((await (await post("/api/shots", { canvas, shot })).json()) as { shot: Shot }).shot;
+    if (!found || values.format || asVideo) shot = ((await (await post("/api/shots", { canvas, shot })).json()) as { shot: Shot }).shot;
     todo = [shot];
   }
   if (!todo.length) {
@@ -729,14 +744,17 @@ async function shotCommand(port: number, canvasArg: string | undefined, values: 
     return;
   }
   for (const shot of todo) {
-    const res = await post("/api/shot/export", { canvas, shot });
+    const video = shot.kind === "video";
+    if (video) console.log(`  ${c.dim(`Recording ${shot.frame} (${shot.motion.duration}s, ${shot.motion.template})…`)}`);
+    const res = await post(video ? "/api/shot/video" : "/api/shot/export", { canvas, shot });
     if (!res.ok) {
       console.error(`  ${c.red("✗")} ${shot.frame}: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText}`);
       process.exitCode = 1;
       continue;
     }
     const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const out = path.resolve(values.out && todo.length === 1 ? values.out : path.join("shots", `${slug(canvas)}-${slug(shot.frame)}-${shot.format.replace(":", "x")}${todo.length > 1 ? `-${shot.id}` : ""}.png`));
+    const ext = video ? (res.headers.get("x-shot-ext") ?? "mp4") : "png";
+    const out = path.resolve(values.out && todo.length === 1 ? values.out : path.join("shots", `${slug(canvas)}-${slug(shot.frame)}-${shot.format.replace(":", "x")}${todo.length > 1 ? `-${shot.id}` : ""}.${ext}`));
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
     console.log(`  ${c.green("✓")} ${shot.frame} ${c.dim(`(${shot.format}, ${res.headers.get("x-shot-size") ?? ""})`)} ${path.relative(process.cwd(), out)}`);

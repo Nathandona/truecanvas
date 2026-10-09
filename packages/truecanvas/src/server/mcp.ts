@@ -15,6 +15,7 @@ import { createSnapshot } from "../share/snapshot.js";
 import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type LiveSite } from "../share/publish.js";
 import { canExport, exportSite } from "../share/export.js";
 import type { ShotService } from "./shot.js";
+import { findEncoder, videoStill } from "./video.js";
 import { newShot, normalizeShot, SHOT_FORMATS, SHOT_SHADERS, type Shot } from "../core/shot-model.js";
 import { readTokenData } from "../core/tokens.js";
 import type { Sessions } from "../share/session.js";
@@ -32,7 +33,7 @@ Workflow:
 4. screenshot_frame to check the result visually. get_selection tells you what the user has selected in the editor ("make this denser" = the selection).
 5. focus to show the user what you changed. Everything is undoable by the user.
 
-Posting a design (X, LinkedIn): make_shot stages a frame on a shader or gradient backdrop at a social format and exports a PNG to shots/. Look at the preview it returns and adjust (colors, framing, crop) until it looks right.`;
+Posting a design (X, LinkedIn): make_shot stages a frame on a shader or gradient backdrop at a social format and exports a PNG to shots/, or an MP4 with video (the page live: it rises in, scrolls or drifts, its own animations playing). Look at the preview it returns and adjust (colors, framing, crop) until it looks right.`;
 
 const literal = z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.union([z.string(), z.number(), z.boolean()]))]);
 const deviceIds = DEVICES.map((d) => d.id) as [string, ...string[]];
@@ -786,9 +787,19 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
           })
           .optional(),
         crop: z.object({ mode: z.enum(["top", "full"]).optional(), height: z.number().optional().describe("With top: how many px of the frame, from its top.") }).optional(),
+        video: z
+          .object({
+            motion: z.enum(["reveal", "scroll", "drift"]).optional().describe("reveal: the design rises into place while its own animations play; scroll: the page scrolls like a visitor would (scroll animations play); drift: a slow push in."),
+            duration: z.number().optional().describe("Seconds, 3 to 20 (default 7)."),
+            backdropMotion: z.boolean().optional().describe("The shader backdrop drifts gently (default true)."),
+            scrollDistance: z.number().optional().describe("scroll: how far down the page goes, in px."),
+          })
+          .optional()
+          .describe("Make an MP4 (30 fps, the format's size) instead of a PNG: the page itself, live, recorded frame by frame. Takes about 10 seconds of rendering per second of video. Needs ffmpeg."),
+        image: z.boolean().optional().describe("Back to a PNG for a shot that was a video."),
       },
     },
-    async ({ canvas, frame, id, new: fresh, format, backdrop, framing, crop }) => {
+    async ({ canvas, frame, id, new: fresh, format, backdrop, framing, crop, video, image }) => {
       try {
         if (!shotService) throw new Error("Shots are made by the Truecanvas server (npx truecanvas).");
         const c = resolveCanvas(canvas);
@@ -807,12 +818,30 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             backdrop: { ...base.backdrop, ...back, ...(shuffle ? { seed: Math.floor(Math.random() * 100_000) } : {}) },
             framing: { ...base.framing, ...framing },
             crop: { ...base.crop, ...crop },
+            ...(video ? { kind: "video", motion: { ...base.motion, ...(video.motion ? { template: video.motion } : {}), ...video } } : image ? { kind: "image" } : {}),
           }),
         );
-        const out = await shotService.export(c, shot);
         const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-        const rel = path.join("shots", `${slug(c)}-${slug(frame)}-${shot.format.replace(":", "x")}.png`);
         fs.mkdirSync(path.join(ws.config.root, "shots"), { recursive: true });
+        if (shot.kind === "video") {
+          presence(c, "looking", `Recording a video of ${frame}`);
+          const v = await shotService.video(c, shot);
+          const rel = path.join("shots", `${slug(c)}-${slug(frame)}-${shot.format.replace(":", "x")}.${v.ext}`);
+          fs.writeFileSync(path.join(ws.config.root, rel), v.data);
+          const enc = findEncoder();
+          const still = enc ? videoStill(enc, v.data, v.ext, Math.min(v.seconds - 0.2, Math.max(1.6, v.seconds * 0.6))) : null;
+          return {
+            content: [
+              ...(still ? [{ type: "image" as const, data: still.toString("base64"), mimeType: "image/png" }] : []),
+              {
+                type: "text" as const,
+                text: `✓ Video shot ${shot.id} of "${frame}" (${shot.format}, ${shot.motion.template}, ${shot.motion.duration}s): ${rel}, ${v.width}×${v.height}${v.ext === "webm" ? " (WebM: install ffmpeg with libx264 for MP4)" : ""}. ${still ? "The image is a frame from it. " : ""}Saved in ${c}.shots.json: the user can open it from the frame's Make a shot in the editor.`,
+              },
+            ],
+          };
+        }
+        const out = await shotService.export(c, shot);
+        const rel = path.join("shots", `${slug(c)}-${slug(frame)}-${shot.format.replace(":", "x")}.png`);
         fs.writeFileSync(path.join(ws.config.root, rel), out.png);
         const preview = await shotService.preview(c, shot);
         return {

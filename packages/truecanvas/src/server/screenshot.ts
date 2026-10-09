@@ -125,6 +125,85 @@ export class Screenshotter {
     });
   }
 
+  /**
+   * A video, frame by frame: the page runs on a virtual clock (Playwright's,
+   * which drives timers, requestAnimationFrame and performance.now in every
+   * frame, the app's included) and CSS and Web Animations are paused and moved
+   * to the same time, so each frame is exact however slow the machine is.
+   * Before each screenshot, `at(i)` sets the compositor's time and how far the
+   * app's page is scrolled.
+   */
+  async record(
+    url: string,
+    viewport: { width: number; height: number },
+    opts: {
+      frames: number;
+      fps: number;
+      image: "jpeg" | "png";
+      /** which frame of the page is the app's */
+      isApp: (url: string) => boolean;
+      at: (i: number) => { t: number; scroll: number };
+      onFrame: (img: Buffer, i: number) => Promise<void>;
+    },
+  ): Promise<void> {
+    return this.withContext({ viewport, deviceScaleFactor: 1, colorScheme: "light" }, async (ctx) => {
+      await ctx.addInitScript(() => {
+        // CSS and Web Animations follow the virtual clock: paused, then set to their time at each step
+        const started = new WeakMap<Animation, number>();
+        let now = 0;
+        (window as unknown as { __tcRecStep: (ms: number) => void }).__tcRecStep = (ms: number) => {
+          now += ms;
+          for (const a of document.getAnimations()) {
+            if (!started.has(a)) {
+              started.set(a, now - ms - (Number(a.currentTime) || 0));
+              a.pause();
+            }
+            try {
+              a.currentTime = now - started.get(a)!;
+            } catch {
+              /* an animation that can't seek */
+            }
+          }
+        };
+      });
+      await ctx.clock.install({ time: new Date("2026-01-01T09:00:00Z") });
+      const page = await ctx.newPage();
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      // ready: the compositor and the app's page loaded (in real time: the pages' clock stands still)
+      type Win = { __shotReady?: boolean; __shotError?: string; __tcSetTime?: (t: number) => void; __tcRecStep?: (ms: number) => void };
+      const deadline = Date.now() + 60_000;
+      let app = page.frames().find((f) => opts.isApp(f.url()));
+      for (;;) {
+        const error = await page.evaluate(() => (window as unknown as Win).__shotError).catch(() => undefined);
+        if (error) throw new Error(`The video couldn't render: ${error}`);
+        app = page.frames().find((f) => opts.isApp(f.url()));
+        const ready =
+          !!app &&
+          (await page.evaluate(() => !!(window as unknown as Win).__shotReady).catch(() => false)) &&
+          (await app.evaluate(() => document.readyState === "complete" && !!document.querySelector("[data-tc-frame]")).catch(() => false));
+        if (ready) break;
+        if (Date.now() > deadline) throw new Error("The frame didn't load in time: is the app running?");
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      await app!.evaluate(() => document.fonts.ready);
+      await page.evaluate(() => document.fonts.ready);
+      const step = 1000 / opts.fps;
+      for (let i = 0; i < opts.frames; i++) {
+        const { t, scroll } = opts.at(i);
+        await page.evaluate((t) => (window as unknown as Win).__tcSetTime?.(t), t);
+        await app!.evaluate(
+          ([y, ms]) => {
+            document.documentElement.scrollTop = y;
+            (window as unknown as Win).__tcRecStep?.(ms);
+          },
+          [scroll, i === 0 ? 0 : step] as const,
+        );
+        await page.clock.runFor(step);
+        await opts.onFrame(await page.screenshot(opts.image === "jpeg" ? { type: "jpeg", quality: 92 } : { type: "png" }), i);
+      }
+    });
+  }
+
   /** Screenshot of the [data-tc-frame] element of a page (Assets thumbnails). */
   async element(url: string, viewport: { width: number; height: number }): Promise<Buffer> {
     return this.withContext({ viewport, deviceScaleFactor: 2, colorScheme: "light" }, async (ctx) => {

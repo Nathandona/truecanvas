@@ -28,6 +28,7 @@ import { createSnapshot, sharesDir } from "../share/snapshot.js";
 import { linkInfo, parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
 import { canExport, exportSite } from "../share/export.js";
 import { ShotService } from "./shot.js";
+import { normalizeShot } from "../core/shot-model.js";
 import { CommentSync } from "../share/sync.js";
 import { Sessions } from "../share/session.js";
 import { assertCanvasName } from "../core/scaffold.js";
@@ -505,6 +506,21 @@ export async function startServer(ws: Workspace) {
         res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store", "x-shot-size": `${out.width}x${out.height}` });
         return res.end(out.png);
       }
+      case "GET /api/shot/live": {
+        // the app's page for a frame: the editor's video preview loads it
+        const canvas = url.searchParams.get("canvas") ?? "";
+        assertCanvasName(canvas);
+        return json(res, 200, { src: shotService.liveSrc(canvas, normalizeShot({ frame: url.searchParams.get("frame") ?? "" })) });
+      }
+      case "POST /api/shot/video": {
+        const { canvas, shot } = (await readJson(req)) as { canvas: string; shot: unknown };
+        assertCanvasName(canvas);
+        const out = await shotService.video(canvas, shot);
+        res.writeHead(200, { "content-type": out.ext === "mp4" ? "video/mp4" : "video/webm", "cache-control": "no-store", "x-shot-size": `${out.width}x${out.height}`, "x-shot-ext": out.ext });
+        return res.end(out.data);
+      }
+      case "GET /api/shot/progress":
+        return json(res, 200, { progress: shotService.videoProgress(url.searchParams.get("canvas") ?? "") });
       case "GET /api/share/progress":
         return json(res, 200, { step: shareStep });
       case "POST /api/share/snapshot": {

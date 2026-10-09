@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { findDevice } from "../core/devices.js";
-import { captureHeight, normalizeShot, SHOT_FORMATS, type Shot } from "../core/shot-model.js";
+import { captureHeight, normalizeShot, SHOT_FORMATS, SHOT_FPS, shotPoseAt, type Shot } from "../core/shot-model.js";
+import { findEncoder, NO_ENCODER, startEncoder } from "./video.js";
 import type { Workspace } from "../core/workspace.js";
 import type { Screenshotter } from "./screenshot.js";
 
@@ -24,7 +25,9 @@ const FRESH_MS = 5 * 60_000;
 
 export class ShotService {
   private captures = new Map<string, Capture>();
-  private jobs = new Map<string, { shot: Shot; key: string; expires: number }>();
+  private jobs = new Map<string, { shot: Shot; key: string; expires: number; live?: { src: string; width: number; height: number } }>();
+  /** videos being rendered, by canvas: frames done of total */
+  private progress = new Map<string, { done: number; total: number }>();
 
   constructor(
     private ws: Workspace,
@@ -74,7 +77,67 @@ export class ShotService {
     if (!job || job.expires < Date.now()) return null;
     const c = this.captures.get(job.key);
     if (!c) return null;
-    return { shot: job.shot, image: { src: `/api/shot/frame?key=${job.key}&t=${c.at}`, width: c.width, height: c.height } };
+    return { shot: job.shot, image: { src: `/api/shot/frame?key=${job.key}&t=${c.at}`, width: c.width, height: c.height }, ...(job.live ? { live: job.live } : {}) };
+  }
+
+  /** The app's page for a frame, as the compositor loads it in videos (and the editor's preview). */
+  liveSrc(canvas: string, shot: Shot) {
+    const f = this.frameOf(canvas, shot.frame);
+    const theme = f.theme ?? "light";
+    return `${this.ws.config.appUrl}/truecanvas/${encodeURIComponent(canvas)}?frame=${encodeURIComponent(f.frameName)}&theme=${theme}&editor=${encodeURIComponent(this.origin())}`;
+  }
+
+  videoProgress(canvas: string) {
+    return this.progress.get(canvas) ?? null;
+  }
+
+  /**
+   * The shot as a video: the compositor with the app's page live in it,
+   * recorded frame by frame on a virtual clock and encoded by ffmpeg.
+   */
+  async video(canvas: string, input: unknown): Promise<{ data: Buffer; ext: "mp4" | "webm"; width: number; height: number; seconds: number; shot: Shot }> {
+    const shot = { ...normalizeShot(input), kind: "video" as const };
+    const enc = findEncoder();
+    if (!enc) throw new Error(NO_ENCODER);
+    const f = this.frameOf(canvas, shot.frame);
+    // the page's height as shown: from the (cached) capture
+    const { key, capture } = await this.capture(canvas, shot);
+    // scroll: the page shows a screen of it and scrolls; otherwise the part a shot shows
+    const visible = shot.motion.template === "scroll" ? Math.min(capture.height, shot.crop.mode === "top" ? shot.crop.height : capture.height) : capture.height;
+    const live = { src: this.liveSrc(canvas, shot), width: f.width, height: visible };
+    const id = crypto.randomBytes(9).toString("base64url");
+    this.jobs.set(id, { shot, key, expires: Date.now() + 30 * 60_000, live });
+    const frames = Math.round(shot.motion.duration * SHOT_FPS);
+    const { width, height } = SHOT_FORMATS[shot.format];
+    // videos post at the format's size; odd sizes don't encode
+    const size = { width: width - (width % 2), height: height - (height % 2) };
+    const encoder = startEncoder(enc, SHOT_FPS);
+    const appOrigin = new URL(this.ws.config.appUrl).origin;
+    this.progress.set(canvas, { done: 0, total: frames });
+    try {
+      await this.shots.record(`${this.origin()}/shot.html?job=${id}`, size, {
+        frames,
+        fps: SHOT_FPS,
+        image: enc.frames,
+        isApp: (u) => u.startsWith(appOrigin) && u.includes("/truecanvas/"),
+        at: (i) => {
+          const t = i / SHOT_FPS;
+          return { t, scroll: shotPoseAt(shot, t).scroll };
+        },
+        onFrame: async (img, i) => {
+          await encoder.write(img);
+          this.progress.set(canvas, { done: i + 1, total: frames });
+        },
+      });
+      const data = await encoder.finish();
+      return { data, ext: enc.ext, width: size.width, height: size.height, seconds: shot.motion.duration, shot };
+    } catch (err) {
+      encoder.abort();
+      throw err;
+    } finally {
+      this.jobs.delete(id);
+      this.progress.delete(canvas);
+    }
   }
 
   /** A small render from the cached capture: what an agent looks at. */

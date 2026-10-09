@@ -22,7 +22,7 @@ Truecanvas renders your actual `.tsx` components on an infinite canvas and write
 - **Design on real pages.** Link any Next.js page as a frame: editing its layers edits `page.tsx` and its layouts.
 - **Components and libraries.** Turn a selection into a component, edit main components, install icon sets (Lucide, Tabler, Phosphor, Heroicons, Radix) and add shadcn/ui components.
 - **Share with clients.** One click freezes a page into a private link on your own domain: clients look and comment in their browser, nothing to install, and their comments land on your canvas for you or your agent to answer.
-- **Shots for X and LinkedIn.** Stage a frame on a Paper shader or a gradient, with a browser or phone frame, a tilt and a soft shadow, at a social format, and export a sharp PNG. Settings are saved, so the image can be made again after the design changes.
+- **Shots for X and LinkedIn.** Stage a frame on a Paper shader or a gradient, with a browser or phone frame, a tilt and a soft shadow, at a social format, and export a sharp PNG, or an MP4 of the page itself rising in, scrolling or drifting with its own animations. Settings are saved, so shots can be made again after the design changes.
 - **Git built in.** Per-frame change summaries, branches, commits, pull requests with before/after images, visual compare and comments that travel with branches.
 - **Motion, devices, themes.** Scroll reveals and text animations, iPhone/Pixel/iPad presets with device chrome, and per-frame light and dark themes.
 - **Lightweight.** Frames render through your existing dev server. Headless Chromium only starts when an agent asks for a screenshot.
@@ -148,7 +148,13 @@ npx truecanvas shot home --frame Pricing --format 1:1
 npx truecanvas shot home --all                   # every saved shot again
 ```
 
-Agents use `make_shot` ("make a LinkedIn image of the hero on a navy gradient"): it saves the shot, exports it to `shots/` and looks at a preview to adjust.
+**Video**: switch the dialog to Video and the frame is your page itself, live: **Reveal** (it rises into place while its own animations play), **Scroll** (it scrolls like a visitor would, scroll animations included) or **Drift** (a slow push in), 3 to 15 seconds, with the shader backdrop moving gently. The preview plays in the dialog; **Export video** records it frame by frame on a virtual clock, so every frame is exact however busy the machine is, and encodes a 30 fps MP4 at the format's size (about 10 seconds of rendering per second of video). It needs `ffmpeg` (`npx truecanvas doctor` checks); without one with H.264, Playwright's ffmpeg writes WebM.
+
+```bash
+npx truecanvas shot home --frame Home --video --motion scroll --duration 8
+```
+
+Agents use `make_shot` ("make a LinkedIn image of the hero on a navy gradient", or with `video` for an MP4): it saves the shot, exports it to `shots/` and looks at a preview (a frame of the video) to adjust.
 
 ## Configuration
 

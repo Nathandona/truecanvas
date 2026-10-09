@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { captureHeight, normalizeShot, shotLayout, Shots } from "../dist/core/index.js";
+import { captureHeight, normalizeShot, shotLayout, shotPoseAt, Shots } from "../dist/core/index.js";
 
 test("a shot is completed and made safe from any input", () => {
   const s = normalizeShot({ frame: "Home", format: "nope", backdrop: { colors: ["red", "#123456", "url(x)"], grain: 9 }, framing: { tilt: 90, chrome: "tv" } });
@@ -39,4 +39,19 @@ test("shots are saved next to the canvas, newest first", () => {
   assert.ok(shots.remove("home", a.id) && shots.remove("home", b.id));
   assert.equal(fs.existsSync(path.join(root, "canvas", "home.shots.json")), false);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a video's motion starts hidden or low, and settles in place", () => {
+  const reveal = normalizeShot({ frame: "Home", kind: "video", motion: { template: "reveal", duration: 6 } });
+  const start = shotPoseAt(reveal, 0);
+  const end = shotPoseAt(reveal, 6);
+  assert.ok(start.opacity < 0.1 && start.y > 100);
+  assert.equal(end.opacity, 1);
+  assert.ok(Math.abs(end.y) < 0.5);
+  // scroll: a beat at the top, the whole distance by the end
+  const scroll = normalizeShot({ frame: "Home", kind: "video", motion: { template: "scroll", duration: 8, scrollDistance: 2000 } });
+  assert.equal(shotPoseAt(scroll, 0.5).scroll, 0);
+  assert.equal(Math.round(shotPoseAt(scroll, 8).scroll), 2000);
+  // an image never moves
+  assert.deepEqual(shotPoseAt(normalizeShot({ frame: "Home" }), 3), { opacity: 1, y: 0, scale: 1, lift: 0, scroll: 0, shaderTime: 0 });
 });

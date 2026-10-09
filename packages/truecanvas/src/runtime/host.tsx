@@ -479,6 +479,10 @@ function startBridge({ frame, setTheme, replay }: { frame: string | null; setThe
         document.documentElement.scrollTop = 0;
         replay();
         break;
+      case "tc:scroll":
+        // a shot's video preview scrolls the page (overflow stays hidden: no scrollbar in the picture)
+        document.documentElement.scrollTop = Number(msg.y) || 0;
+        break;
     }
   };
   window.addEventListener("message", onMessage);

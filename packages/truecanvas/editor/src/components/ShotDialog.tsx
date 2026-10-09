@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, Dices, Download, ImagePlus, LoaderCircle, Plus, RefreshCcw, Trash2 } from "lucide-react";
-import { newShot, normalizeShot, SHOT_FORMATS, SHOT_SHADERS, type Shot, type ShotFormat, type ShotShader } from "../../../src/core/shot-model";
+import { Check, Copy, Dices, Download, ImagePlus, LoaderCircle, Pause, Play, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { newShot, normalizeShot, SHOT_FORMATS, SHOT_MOTIONS, SHOT_SHADERS, type Shot, type ShotFormat, type ShotShader } from "../../../src/core/shot-model";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
-import { Backdrop, ShotStage, type ShotImage } from "../shot/ShotStage";
-import { ColorList, Segmented } from "./controls";
+import { Backdrop, ShotStage, type ShotImage, type ShotLive } from "../shot/ShotStage";
+import { ColorList, Segmented, Switch } from "./controls";
 import { Dialog } from "./Dialog";
 
 /*
@@ -52,6 +52,11 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
   const [exporting, setExporting] = useState<"" | "copy" | "download">("");
   const [copied, setCopied] = useState(false);
   const [brand, setBrand] = useState<string[]>([]);
+  // videos: the page live in the preview, and where the preview is in time
+  const [liveSrc, setLiveSrc] = useState<string | null>(null);
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const toast = useStore((s) => s.toast);
 
   // the frame's shots, or a new one in the project's colors
@@ -93,6 +98,42 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
     return () => clearTimeout(t);
   }, [capture]);
 
+  const video = shot?.kind === "video";
+  const duration = shot?.motion.duration ?? 7;
+  useEffect(() => {
+    if (!video || liveSrc) return;
+    void fetch(`/api/shot/live?canvas=${encodeURIComponent(canvas)}&frame=${encodeURIComponent(frame)}`)
+      .then((r) => r.json())
+      .then((r: { src?: string }) => r.src && setLiveSrc(r.src));
+  }, [video, liveSrc, canvas, frame]);
+  // the preview plays in real time, looping (the export is frame-exact)
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    const start = performance.now() - time * 1000;
+    const tick = (now: number) => {
+      const t = (now - start) / 1000;
+      if (t >= duration + 0.8) {
+        setTime(0);
+        setPlaying(false);
+        // loop: the page's own animations start again with it
+        setTimeout(() => replayAndPlay(), 300);
+        return;
+      }
+      setTime(Math.min(t, duration));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, duration]);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const replayAndPlay = () => {
+    previewRef.current?.querySelector("iframe")?.contentWindow?.postMessage({ type: "tc:replay" }, "*");
+    setTime(0);
+    setPlaying(true);
+  };
+
   // saved as you go
   const saveTimer = useRef<number>(0);
   const update = (change: (s: Shot) => Shot) => {
@@ -133,6 +174,32 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
     }
   };
 
+  const exportVideo = async () => {
+    if (!shot) return;
+    setPlaying(false);
+    setProgress(0);
+    const poll = window.setInterval(() => {
+      void fetch(`/api/shot/progress?canvas=${encodeURIComponent(canvas)}`)
+        .then((r) => r.json())
+        .then((r: { progress: { done: number; total: number } | null }) => r.progress && setProgress(r.progress.done / r.progress.total));
+    }, 600);
+    try {
+      const res = await fetch("/api/shot/video", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ canvas, shot }) });
+      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Export failed (${res.status})`);
+      const ext = res.headers.get("x-shot-ext") ?? "mp4";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await res.blob());
+      a.download = `${canvas}-${frame}-${shot.format.replace(":", "x")}.${ext}`.toLowerCase().replace(/[^a-z0-9.-]+/g, "-");
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      clearInterval(poll);
+      setProgress(null);
+    }
+  };
+
   if (!shot || !shots) {
     return (
       <Dialog title={`Shot of ${frame}`} width={420} onClose={close}>
@@ -152,8 +219,78 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
       setShot(left[0] ?? newShot(frame, b.colors));
     })} />} width={1180} onClose={close}>
       <div className="shot">
-        <Preview shot={shot} image={image} busy={capturing} />
+        <div className="shot-left" ref={previewRef}>
+          <Preview shot={shot} image={image} busy={capturing && !video} live={video && liveSrc && image ? { src: liveSrc, width: image.width, height: liveHeight(shot, image) } : null} time={video ? time : 0} />
+          {video && (
+            <div className="shot-play">
+              <button className="icon-btn" onClick={() => (playing ? setPlaying(false) : time >= duration ? replayAndPlay() : time === 0 ? replayAndPlay() : setPlaying(true))} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"}>
+                {playing ? <Pause size={15} /> : <Play size={15} />}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={duration}
+                step={0.01}
+                value={time}
+                aria-label="Time"
+                style={{ ["--p" as string]: `${(time / duration) * 100}%` }}
+                onChange={(e) => {
+                  setPlaying(false);
+                  setTime(Number(e.target.value));
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              <span className="shot-time">
+                {time.toFixed(1)}s / {duration}s
+              </span>
+            </div>
+          )}
+        </div>
         <div className="shot-side">
+          <Segmented
+            value={shot.kind}
+            options={[
+              { value: "image", label: "Image" },
+              { value: "video", label: "Video" },
+            ]}
+            onChange={(v) => {
+              update((s) => ({ ...s, kind: v }));
+              if (v === "video") setTimeout(replayAndPlay, 600);
+              else setPlaying(false);
+            }}
+          />
+          {video && (
+            <Group title="Motion">
+              <div className="shot-motions">
+                {SHOT_MOTIONS.map((m) => (
+                  <button
+                    key={m.value}
+                    className={`shot-motion${shot.motion.template === m.value ? " on" : ""}`}
+                    onClick={() => {
+                      update((s) => ({ ...s, motion: { ...s.motion, template: m.value } }));
+                      setTimeout(replayAndPlay, 50);
+                    }}
+                  >
+                    <b>{m.label}</b>
+                    <span>{m.hint}</span>
+                  </button>
+                ))}
+              </div>
+              <Range label="Length" value={shot.motion.duration} min={3} max={15} unit="s" onChange={(duration) => update((s) => ({ ...s, motion: { ...s.motion, duration } }))} />
+              {shot.motion.template === "scroll" && (
+                <Range label="Scroll" value={shot.motion.scrollDistance} min={400} max={8000} step={100} unit="px" onChange={(scrollDistance) => update((s) => ({ ...s, motion: { ...s.motion, scrollDistance } }))} />
+              )}
+              {shot.backdrop.type === "shader" && (
+                <div className="shot-row">
+                  <span className="shot-label">Backdrop</span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Moves gently
+                  </span>
+                  <Switch on={shot.motion.backdropMotion} onChange={(backdropMotion) => update((s) => ({ ...s, motion: { ...s.motion, backdropMotion } }))} ariaLabel="Backdrop moves" />
+                </div>
+              )}
+            </Group>
+          )}
           <Group title="Format">
             <div className="shot-formats">
               {(Object.keys(SHOT_FORMATS) as ShotFormat[]).map((k) => (
@@ -259,6 +396,7 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
             )}
           </Group>
 
+          {!video && (
           <Group title="Export">
             <Segmented
               value={String(shot.scale) as "1" | "2"}
@@ -269,6 +407,7 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
               onChange={(v) => update((s) => ({ ...s, scale: v === "1" ? 1 : 2 }))}
             />
           </Group>
+          )}
         </div>
       </div>
       <div className="modal-actions shot-actions">
@@ -276,12 +415,24 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
           <RefreshCcw size={13} /> Refresh frame
         </button>
         <span className="shot-saved faint">Saved to {canvas}.shots.json</span>
-        <button className="btn outline" onClick={() => void exportPng("copy")} disabled={!!exporting}>
-          {exporting === "copy" ? <LoaderCircle size={13} className="spin-working" /> : copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy image"}
-        </button>
-        <button className="btn primary" onClick={() => void exportPng("download")} disabled={!!exporting}>
-          {exporting === "download" ? <LoaderCircle size={13} className="spin-working" /> : <Download size={13} />} Export PNG
-        </button>
+        {video ? (
+          <button className="btn primary shot-export-video" onClick={() => void exportVideo()} disabled={progress !== null}>
+            {progress !== null && <span className="shot-progress" style={{ width: `${Math.round(progress * 100)}%` }} />}
+            <span className="shot-export-label">
+              {progress !== null ? <LoaderCircle size={13} className="spin-working" /> : <Download size={13} />}
+              {progress !== null ? `Rendering ${Math.round(progress * 100)}%` : "Export video"}
+            </span>
+          </button>
+        ) : (
+          <>
+            <button className="btn outline" onClick={() => void exportPng("copy")} disabled={!!exporting}>
+              {exporting === "copy" ? <LoaderCircle size={13} className="spin-working" /> : copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy image"}
+            </button>
+            <button className="btn primary" onClick={() => void exportPng("download")} disabled={!!exporting}>
+              {exporting === "download" ? <LoaderCircle size={13} className="spin-working" /> : <Download size={13} />} Export PNG
+            </button>
+          </>
+        )}
       </div>
     </Dialog>
   );
@@ -314,7 +465,7 @@ function ShotTitle({ frame, shots, shot, onPick, onNew, onDelete }: { frame: str
 }
 
 /** The compositor scaled to fit, exactly as it exports. */
-function Preview({ shot, image, busy }: { shot: Shot; image: ShotImage | null; busy: boolean }) {
+function Preview({ shot, image, busy, live, time }: { shot: Shot; image: ShotImage | null; busy: boolean; live: ShotLive | null; time: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 600, h: 600 });
   useEffect(() => {
@@ -329,7 +480,7 @@ function Preview({ shot, image, busy }: { shot: Shot; image: ShotImage | null; b
     <div className="shot-preview" ref={ref}>
       <div className="shot-canvas" style={{ width: width * k, height: height * k }}>
         <div style={{ width, height, transform: `scale(${k})`, transformOrigin: "0 0" }}>
-          <ShotStage shot={shot} image={image} />
+          <ShotStage shot={shot} image={image} live={live} time={time} scrollByMessage />
         </div>
       </div>
       {busy && (
@@ -481,4 +632,9 @@ function brandPalette(colors: string[]): string[] {
   const dark = seen.filter((x) => x.lum < 0.18).sort((a, b) => a.lum - b.lum)[0];
   const picked = [...(dark ? [dark] : []), ...vivid.sort((a, b) => b.sat - a.sat)].filter((x, i, all) => all.indexOf(x) === i).slice(0, 4);
   return picked.length >= 2 ? picked.sort((a, b) => a.lum - b.lum).map((x) => x.hex) : [];
+}
+
+/** How much of the page the video shows at once: a screen of it when it scrolls, else what the shot shows. */
+function liveHeight(shot: Shot, image: ShotImage) {
+  return shot.motion.template === "scroll" && shot.crop.mode === "top" ? Math.min(image.height, shot.crop.height) : image.height;
 }
