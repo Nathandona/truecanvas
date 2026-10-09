@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { captureHeight, normalizeShot, shotLayout, shotPoseAt, Shots } from "../dist/core/index.js";
+import { captureHeight, linkScroll, normalizeShot, scrollProgress, shotLayout, shotPoseAt, Shots } from "../dist/core/index.js";
 
 test("a shot is completed and made safe from any input", () => {
   const s = normalizeShot({ frame: "Home", format: "nope", backdrop: { colors: ["red", "#123456", "url(x)"], grain: 9 }, framing: { tilt: 90, chrome: "tv" } });
@@ -54,4 +54,37 @@ test("a video's motion starts hidden or low, and settles in place", () => {
   assert.equal(Math.round(shotPoseAt(scroll, 8).scroll), 2000);
   // an image never moves
   assert.deepEqual(shotPoseAt(normalizeShot({ frame: "Home" }), 3), { opacity: 1, y: 0, scale: 1, lift: 0, scroll: 0, shaderTime: 0 });
+});
+
+test("a scroll eases in, cruises and eases out, without a jolt", () => {
+  const T = 6;
+  let prev = 0;
+  let peak = 0;
+  let prevSpeed = 0;
+  let jump = 0;
+  for (let i = 1; i <= 600; i++) {
+    const p = scrollProgress(i / 100, T);
+    const speed = (p - prev) * 100;
+    peak = Math.max(peak, speed);
+    if (i > 1) jump = Math.max(jump, Math.abs(speed - prevSpeed));
+    prev = p;
+    prevSpeed = speed;
+  }
+  assert.equal(scrollProgress(T, T), 1);
+  // the top speed stays close to the average: no rush mid-way
+  assert.ok(peak * T < 1.25, `peak ${peak * T}`);
+  // speed changes smoothly from one hundredth of a second to the next
+  assert.ok(jump < 0.01, `jump ${jump}`);
+});
+
+test("a scroll's distance, speed and length stay linked", () => {
+  const m = normalizeShot({ frame: "Home", kind: "video", motion: { template: "scroll", scrollDistance: 2600, scrollSpeed: 520 } }).motion;
+  const byDistance = linkScroll(m, "distance");
+  // 2600 px at 520 px/s: 5 s of cruise, ramps and beats around it
+  assert.ok(byDistance.duration > 7 && byDistance.duration < 8.5, String(byDistance.duration));
+  const back = linkScroll(byDistance, "duration");
+  assert.ok(Math.abs(back.scrollDistance - 2600) < 80, String(back.scrollDistance));
+  const faster = linkScroll({ ...byDistance, scrollSpeed: 800 }, "speed");
+  assert.ok(faster.duration < byDistance.duration);
+  assert.equal(faster.scrollDistance, 2600);
 });

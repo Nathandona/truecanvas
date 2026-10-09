@@ -67,6 +67,59 @@ export interface ShotMotion {
   backdropMotion: boolean;
   /** scroll: how far down the page goes, in the frame's px */
   scrollDistance: number;
+  /** scroll: its cruising speed, in the frame's px per second (distance, speed and duration stay linked) */
+  scrollSpeed: number;
+}
+
+/** Scroll speeds offered, px per second: calm enough to read, quick enough to keep attention. */
+export const SHOT_SCROLL_SPEEDS = [
+  { value: 320, label: "Slow" },
+  { value: 520, label: "Medium" },
+  { value: 800, label: "Fast" },
+];
+
+/** A scroll video's beats: still on the top of the page, then the scroll, then still on where it lands. */
+const SCROLL_HOLD_START = 0.9;
+const SCROLL_HOLD_END = 0.9;
+/** speeding up and slowing down, seconds each (shorter for a short scroll) */
+const SCROLL_RAMP = 0.8;
+
+/** The scroll's ramps for a scroll of `seconds`. */
+const rampFor = (seconds: number) => Math.min(SCROLL_RAMP, seconds / 3);
+
+/** The duration a scroll of `distance` px at `speed` px/s needs, beats included. */
+export function scrollDuration(distance: number, speed: number) {
+  // cruising covers distance at speed, minus what the two ramps don't (a ramp averages half the speed)
+  const cruise = distance / speed;
+  const scroll = cruise + rampFor(cruise + SCROLL_RAMP);
+  return Math.round((SCROLL_HOLD_START + scroll + SCROLL_HOLD_END) * 10) / 10;
+}
+
+/** The distance a scroll fills in `duration` seconds at `speed`. */
+export function scrollDistanceFor(duration: number, speed: number) {
+  const scroll = Math.max(0.6, duration - SCROLL_HOLD_START - SCROLL_HOLD_END);
+  return Math.round((scroll - rampFor(scroll)) * speed);
+}
+
+/**
+ * How far the scroll is after `t` seconds of a scroll lasting `T`: it speeds
+ * up and slows down along smoothstep curves (no jolt: the acceleration starts
+ * and ends at zero) and cruises at one speed in between. An ease-in-out over
+ * the whole scroll would peak at nearly twice the average speed mid-way,
+ * which blurs the page; a steady cruise reads better.
+ */
+export function scrollProgress(t: number, T: number): number {
+  if (t <= 0) return 0;
+  if (t >= T) return 1;
+  const a = rampFor(T);
+  // ∫ smoothstep: the distance covered while speeding up, as a share of a ramp at full speed
+  const ramp = (x: number) => x ** 3 - x ** 4 / 2;
+  const full = T - a; // the whole distance in "seconds at cruising speed"
+  let covered: number;
+  if (t < a) covered = a * ramp(t / a);
+  else if (t <= T - a) covered = a / 2 + (t - a);
+  else covered = full - a * ramp((T - t) / a);
+  return covered / full;
 }
 
 export const SHOT_MOTIONS: { value: ShotMotion["template"]; label: string; hint: string }[] = [
@@ -144,6 +197,7 @@ export function normalizeShot(input: unknown): Shot {
       duration: Math.round(clamp(m.duration, 3, 20, 7) * 10) / 10,
       backdropMotion: typeof m.backdropMotion === "boolean" ? m.backdropMotion : true,
       scrollDistance: Math.round(clamp(m.scrollDistance, 200, 12_000, 2400)),
+      scrollSpeed: Math.round(clamp(m.scrollSpeed, 120, 2000, 520)),
     },
     updatedAt: typeof x.updatedAt === "number" ? x.updatedAt : Date.now(),
   };
@@ -219,12 +273,22 @@ export function shotPoseAt(shot: Shot, t: number): ShotPose {
     return { opacity: Math.min(1, part(t, 0.15, 0.9) * 1.2), y: (1 - p) * 140, scale: 0.94 + 0.06 * p + 0.02 * easeInOut(part(t, 1.55, d)), lift: (1 - p) * 9, scroll: 0, shaderTime };
   }
   if (m.template === "scroll") {
-    // a beat on the top of the page, the scroll, a beat at the end
+    // a beat on the top of the page, the scroll, a beat on where it lands
     const fade = easeOut(part(t, 0, 0.5));
-    const s = easeInOut(part(t, 0.9, Math.max(1.4, d - 0.9)));
+    const s = scrollProgress(t - SCROLL_HOLD_START, Math.max(0.6, d - SCROLL_HOLD_START - SCROLL_HOLD_END));
     return { opacity: fade, y: (1 - fade) * 24, scale: 1, lift: 0, scroll: s * m.scrollDistance, shaderTime };
   }
   // drift: a slow push in
   const fade = easeOut(part(t, 0, 0.5));
   return { opacity: fade, y: (1 - fade) * 24 - easeInOut(part(t, 0, d)) * 30, scale: 1 + 0.1 * easeInOut(part(t, 0, d)), lift: 0, scroll: 0, shaderTime };
+}
+
+/**
+ * Keeps a scroll's distance, speed and duration consistent after one of them
+ * changed: a new distance or speed sets the duration, a new duration sets the
+ * distance.
+ */
+export function linkScroll(motion: ShotMotion, changed: "distance" | "speed" | "duration"): ShotMotion {
+  if (changed === "duration") return { ...motion, scrollDistance: Math.max(200, scrollDistanceFor(motion.duration, motion.scrollSpeed)) };
+  return { ...motion, duration: Math.min(20, Math.max(3, scrollDuration(motion.scrollDistance, motion.scrollSpeed))) };
 }

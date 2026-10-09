@@ -16,7 +16,7 @@ import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type LiveSite }
 import { canExport, exportSite } from "../share/export.js";
 import type { ShotService } from "./shot.js";
 import { findEncoder, videoStill } from "./video.js";
-import { newShot, normalizeShot, SHOT_FORMATS, SHOT_SHADERS, type Shot } from "../core/shot-model.js";
+import { linkScroll, newShot, normalizeShot, SHOT_FORMATS, SHOT_SHADERS, type Shot } from "../core/shot-model.js";
 import { readTokenData } from "../core/tokens.js";
 import type { Sessions } from "../share/session.js";
 
@@ -792,7 +792,8 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             motion: z.enum(["reveal", "scroll", "drift"]).optional().describe("reveal: the design rises into place while its own animations play; scroll: the page scrolls like a visitor would (scroll animations play); drift: a slow push in."),
             duration: z.number().optional().describe("Seconds, 3 to 20 (default 7)."),
             backdropMotion: z.boolean().optional().describe("The shader backdrop drifts gently (default true)."),
-            scrollDistance: z.number().optional().describe("scroll: how far down the page goes, in px."),
+            scrollDistance: z.number().optional().describe("scroll: how far down the page goes, in px. Distance, speed and duration are linked: give two at most (a duration sets the distance, a distance or speed sets the duration)."),
+            scrollSpeed: z.number().optional().describe("scroll: cruising speed in px per second (320 slow, 520 medium, 800 fast)."),
           })
           .optional()
           .describe("Make an MP4 (30 fps, the format's size) instead of a PNG: the page itself, live, recorded frame by frame. Takes about 10 seconds of rendering per second of video. Needs ffmpeg."),
@@ -809,9 +810,7 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
         const brand = readTokenData(ws.config.root).colors.map((x) => x.light);
         const base: Shot = (!fresh && (id ? saved.find((s) => s.id === id) : saved.find((s) => s.frame === frame))) || newShot(frame, brand.filter((x) => /^#[0-9a-f]{6}$/i.test(x)).slice(0, 4));
         const { shuffle, ...back } = backdrop ?? {};
-        const shot = ws.shots.save(
-          c,
-          normalizeShot({
+        let next = normalizeShot({
             ...base,
             frame,
             ...(format ? { format } : {}),
@@ -819,8 +818,11 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             framing: { ...base.framing, ...framing },
             crop: { ...base.crop, ...crop },
             ...(video ? { kind: "video", motion: { ...base.motion, ...(video.motion ? { template: video.motion } : {}), ...video } } : image ? { kind: "image" } : {}),
-          }),
-        );
+          });
+        // a scroll keeps distance, speed and duration consistent
+        if (next.kind === "video" && next.motion.template === "scroll")
+          next = { ...next, motion: linkScroll(next.motion, video?.duration !== undefined && video.scrollDistance === undefined ? "duration" : "distance") };
+        const shot = ws.shots.save(c, next);
         const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
         fs.mkdirSync(path.join(ws.config.root, "shots"), { recursive: true });
         if (shot.kind === "video") {

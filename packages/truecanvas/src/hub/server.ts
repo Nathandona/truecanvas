@@ -160,8 +160,14 @@ export async function startHub(opts: HubOptions) {
       liveSession: { available: true, sessions: Object.fromEntries(live.filter(([, s]) => s.length)) as Record<string, HubSession[]> },
       projects: store.all().map((p) => {
         const r = runner.running.get(p.path);
-        return { ...p, running: r ? { status: r.status, editor: `http://localhost:${r.editorPort}`, app: `http://localhost:${r.appPort}`, error: r.error, memory: memory[p.path] ?? null } : null };
+        const m = memory[p.path];
+        return {
+          ...p,
+          running: r ? { status: r.status, editor: `http://localhost:${r.editorPort}`, app: `http://localhost:${r.appPort}`, error: r.error, memory: m?.total ?? null, memoryDetail: m ?? null } : null,
+        };
       }),
+      // the window's own server (in the desktop app, its main process)
+      hubMemory: Math.round(process.memoryUsage().rss / 1024 / 1024),
     };
   }
 

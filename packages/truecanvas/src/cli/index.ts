@@ -20,7 +20,7 @@ import { ACCESS_MODES, connectReviewSite, deleteShare, parseEmails, reviewSite, 
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 import { appRun } from "../server/app-run.js";
-import { newShot, normalizeShot, type Shot } from "../core/shot-model.js";
+import { linkScroll, newShot, normalizeShot, type Shot } from "../core/shot-model.js";
 
 const HELP = `truecanvas: design with your real React components
 
@@ -729,12 +729,15 @@ async function shotCommand(
     }
     let shot = found ?? newShot(values.frame!);
     const asVideo = values.video || values.motion || values.duration;
-    if (values.format || asVideo)
+    if (values.format || asVideo) {
       shot = normalizeShot({
         ...shot,
         ...(values.format ? { format: values.format } : {}),
         ...(asVideo ? { kind: "video", motion: { ...shot.motion, ...(values.motion ? { template: values.motion } : {}), ...(values.duration ? { duration: values.duration } : {}) } } : {}),
       });
+      // a scroll: a given length sets how far it goes, otherwise the length follows the distance
+      if (shot.motion.template === "scroll") shot = { ...shot, motion: linkScroll(shot.motion, values.duration ? "duration" : "distance") };
+    }
     // a new or changed shot is saved, so it can be exported again later
     if (!found || values.format || asVideo) shot = ((await (await post("/api/shots", { canvas, shot })).json()) as { shot: Shot }).shot;
     todo = [shot];

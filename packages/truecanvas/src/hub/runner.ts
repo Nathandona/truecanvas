@@ -163,24 +163,37 @@ export class Runner {
     return Promise.all([...this.running.keys()].map((dir) => this.close(dir))).then(() => {});
   }
 
-  /** Resident memory (MB) of each project's process tree. */
-  memory(): Promise<Record<string, number>> {
+  /** Resident memory (MB) of each project's process tree, split by what each process is. */
+  memory(): Promise<Record<string, ProjectMemory>> {
     return new Promise((resolve) => {
-      execFile("ps", ["-eo", "pid=,ppid=,rss="], (err, out) => {
+      // Windows has no ps: no figures there
+      execFile("ps", ["-eo", "pid=,ppid=,rss=,args="], { maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
         if (err) return resolve({});
-        const rows = out
-          .trim()
-          .split("\n")
-          .map((l) => l.trim().split(/\s+/).map(Number));
         const kids = new Map<number, number[]>();
-        const rss = new Map<number, number>();
-        for (const [pid, ppid, kb] of rows) {
-          rss.set(pid, kb);
+        const info = new Map<number, { kb: number; args: string }>();
+        for (const line of out.trim().split("\n")) {
+          const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+          if (!m) continue;
+          const [pid, ppid, kb] = [Number(m[1]), Number(m[2]), Number(m[3])];
+          info.set(pid, { kb, args: m[4] });
           kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
         }
-        const total = (pid: number): number => (rss.get(pid) ?? 0) + (kids.get(pid) ?? []).reduce((s, k) => s + total(k), 0);
-        const outMap: Record<string, number> = {};
-        for (const [dir, run] of this.running) if (run.proc.pid) outMap[dir] = Math.round(total(run.proc.pid) / 1024);
+        const outMap: Record<string, ProjectMemory> = {};
+        for (const [dir, run] of this.running) {
+          if (!run.proc.pid) continue;
+          const split = { app: 0, truecanvas: 0, browser: 0 };
+          // a process belongs to the app, the screenshot browser or Truecanvas; its children follow it unless they say otherwise
+          const walk = (pid: number, inherited: keyof typeof split) => {
+            const p = info.get(pid);
+            if (!p) return;
+            const kind: keyof typeof split = /chrom|headless_shell/i.test(p.args) ? "browser" : /next-server|[\\/]next[\\/]dist[\\/]bin|[\\/]vite[\\/]bin[\\/]vite|[\\/]\.bin[\\/](next|vite)\b|(^|\s)(next|vite)( dev| serve|\s*$)/i.test(p.args) ? "app" : inherited;
+            split[kind] += p.kb;
+            for (const k of kids.get(pid) ?? []) walk(k, kind);
+          };
+          walk(run.proc.pid, "truecanvas");
+          const mb = (kb: number) => Math.round(kb / 1024);
+          outMap[dir] = { total: mb(split.app + split.truecanvas + split.browser), app: mb(split.app), truecanvas: mb(split.truecanvas), browser: mb(split.browser) };
+        }
         resolve(outMap);
       });
     });
@@ -346,4 +359,12 @@ export function cloneJob(repo: string, parent: string, pkgDir: string, cli: stri
     } else job.log.push("Truecanvas is already part of this project.");
     return dir;
   });
+}
+
+/** A running project's memory in MB: its app's dev server, its Truecanvas, its screenshot browser. */
+export interface ProjectMemory {
+  total: number;
+  app: number;
+  truecanvas: number;
+  browser: number;
 }

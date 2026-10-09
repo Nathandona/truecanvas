@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Dices, Download, ImagePlus, LoaderCircle, Pause, Play, Plus, RefreshCcw, Trash2 } from "lucide-react";
-import { newShot, normalizeShot, SHOT_FORMATS, SHOT_MOTIONS, SHOT_SHADERS, type Shot, type ShotFormat, type ShotShader } from "../../../src/core/shot-model";
+import { linkScroll, newShot, normalizeShot, SHOT_FORMATS, SHOT_MOTIONS, SHOT_SCROLL_SPEEDS, SHOT_SHADERS, type Shot, type ShotFormat, type ShotShader } from "../../../src/core/shot-model";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { Backdrop, ShotStage, type ShotImage, type ShotLive } from "../shot/ShotStage";
@@ -267,7 +267,8 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
                     key={m.value}
                     className={`shot-motion${shot.motion.template === m.value ? " on" : ""}`}
                     onClick={() => {
-                      update((s) => ({ ...s, motion: { ...s.motion, template: m.value } }));
+                      // a scroll's length follows its distance and speed
+                      update((s) => ({ ...s, motion: m.value === "scroll" ? linkScroll({ ...s.motion, template: m.value }, "distance") : { ...s.motion, template: m.value } }));
                       setTimeout(replayAndPlay, 50);
                     }}
                   >
@@ -276,10 +277,37 @@ function ShotEditor({ canvas, frame }: { canvas: string; frame: string }) {
                   </button>
                 ))}
               </div>
-              <Range label="Length" value={shot.motion.duration} min={3} max={15} unit="s" onChange={(duration) => update((s) => ({ ...s, motion: { ...s.motion, duration } }))} />
               {shot.motion.template === "scroll" && (
-                <Range label="Scroll" value={shot.motion.scrollDistance} min={400} max={8000} step={100} unit="px" onChange={(scrollDistance) => update((s) => ({ ...s, motion: { ...s.motion, scrollDistance } }))} />
+                <>
+                  <Range
+                    label="Distance"
+                    value={shot.motion.scrollDistance}
+                    min={400}
+                    max={8000}
+                    step={100}
+                    unit="px"
+                    onChange={(scrollDistance) => update((s) => ({ ...s, motion: linkScroll({ ...s.motion, scrollDistance }, "distance") }))}
+                  />
+                  <div className="shot-row">
+                    <span className="shot-label">Speed</span>
+                    <Segmented
+                      value={String(nearestSpeed(shot.motion.scrollSpeed))}
+                      options={SHOT_SCROLL_SPEEDS.map((s) => ({ value: String(s.value), label: s.label }))}
+                      onChange={(v) => update((s) => ({ ...s, motion: linkScroll({ ...s.motion, scrollSpeed: Number(v) }, "speed") }))}
+                    />
+                  </div>
+                </>
               )}
+              <Range
+                label="Length"
+                value={shot.motion.duration}
+                min={3}
+                max={20}
+                step={0.1}
+                unit="s"
+                onChange={(duration) => update((s) => ({ ...s, motion: s.motion.template === "scroll" ? linkScroll({ ...s.motion, duration }, "duration") : { ...s.motion, duration } }))}
+              />
+              {shot.motion.template === "scroll" && <p className="faint shot-hint">Distance, speed and length move together: the page cruises at one speed, easing in and out.</p>}
               {shot.backdrop.type === "shader" && (
                 <div className="shot-row">
                   <span className="shot-label">Backdrop</span>
@@ -528,7 +556,7 @@ function Range({ label, value, min, max, step = 1, unit, lazy, onChange }: { lab
         onKeyDown={(e) => e.stopPropagation()}
       />
       <span className="shot-value">
-        {Math.round(draft)}
+        {step < 1 ? draft.toFixed(1) : Math.round(draft)}
         {unit}
       </span>
     </label>
@@ -637,4 +665,9 @@ function brandPalette(colors: string[]): string[] {
 /** How much of the page the video shows at once: a screen of it when it scrolls, else what the shot shows. */
 function liveHeight(shot: Shot, image: ShotImage) {
   return shot.motion.template === "scroll" && shot.crop.mode === "top" ? Math.min(image.height, shot.crop.height) : image.height;
+}
+
+/** The offered speed closest to a shot's (agents and older shots may use another). */
+function nearestSpeed(speed: number) {
+  return SHOT_SCROLL_SPEEDS.reduce((best, s) => (Math.abs(s.value - speed) < Math.abs(best.value - speed) ? s : best)).value;
 }

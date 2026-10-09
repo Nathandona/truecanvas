@@ -4501,3 +4501,131 @@ details.advanced summary::-webkit-details-marker {
   align-items: center;
   gap: 6px;
 }
+
+/* ---------- memory by project ---------- */
+.mem {
+  position: relative;
+}
+button.mem-chip {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+button.mem-chip:hover,
+button.mem-chip.on {
+  color: var(--text);
+  background: var(--hover-strong, var(--border));
+}
+.mem-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 60;
+  width: 320px;
+  padding: 12px 12px 10px;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--shadow-lg), 0 0 0 0.5px var(--border-strong);
+  transform-origin: top right;
+  animation: pop 0.14s ease-out;
+}
+.mem-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.mem-head .faint {
+  font-weight: 400;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.mem-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.mem-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mem-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.mem-mb {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.mem-close {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mem-close:hover {
+  background: var(--hover);
+  color: var(--danger);
+}
+.mem-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.mem-seg {
+  min-width: 3px;
+}
+.mem-seg.app,
+.mem-dot.app {
+  background: var(--accent);
+}
+.mem-seg.tc,
+.mem-dot.tc {
+  background: #9b8afb;
+}
+.mem-seg.browser,
+.mem-dot.browser {
+  background: #f5a524;
+}
+.mem-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mem-parts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mem-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.mem-hub .mem-name {
+  color: var(--text-2);
+  font-weight: 400;
+}
+.mem-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 15px;
+}

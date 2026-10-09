@@ -37,7 +37,15 @@ interface Project {
   /** open threads clients started on share links */
   clientComments?: number;
   exists: boolean;
-  running: { status: "starting" | "ready" | "failed"; editor: string; app: string; error?: string; memory: number | null } | null;
+  running: {
+    status: "starting" | "ready" | "failed";
+    editor: string;
+    app: string;
+    error?: string;
+    memory: number | null;
+    /** MB: the app's dev server, Truecanvas, the screenshot browser */
+    memoryDetail?: { total: number; app: number; truecanvas: number; browser: number } | null;
+  } | null;
 }
 interface HubState {
   origin: string;
@@ -49,6 +57,8 @@ interface HubState {
   /** a problem to show at the top (the desktop app: Node isn't installed) */
   notice?: string | null;
   projects: Project[];
+  /** MB used by the window's own server */
+  hubMemory?: number;
 }
 interface Job {
   id: string;
@@ -253,13 +263,7 @@ export function HubApp() {
         </div>
         <div className="tabbar-right">
           <UpdatePill />
-          {memory > 0 && (
-            <Tip label="Memory used by open projects (app + Truecanvas)" side="bottom">
-              <span className="mem-chip">
-                <Cpu size={12} /> {memory >= 1024 ? `${(memory / 1024).toFixed(1)} GB` : `${memory} MB`}
-              </span>
-            </Tip>
-          )}
+          {memory > 0 && <MemoryChip projects={open} total={memory} hub={state?.hubMemory ?? 0} onClose={(p) => void closeProject(p)} />}
           <AppMenu version={state?.version} onQuit={() => setQuit(true)} />
         </div>
       </header>
@@ -908,5 +912,91 @@ function JobDialog({ job: initial, onClose }: { job: Job; onClose: (result?: str
         )}
       </div>
     </Modal>
+  );
+}
+
+const mb = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`);
+
+/** The memory chip: what each open project takes, and a way to close the heavy ones. */
+function MemoryChip({ projects, total, hub, onClose }: { projects: Project[]; total: number; hub: number; onClose: (p: Project) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const running = projects.filter((p) => p.running?.memory).sort((a, b) => (b.running!.memory ?? 0) - (a.running!.memory ?? 0));
+  const max = Math.max(1, ...running.map((p) => p.running!.memory ?? 0));
+  return (
+    <div className="mem" ref={ref}>
+      <button className={`mem-chip${open ? " on" : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog" title="Memory used by open projects">
+        <Cpu size={12} /> {mb(total)}
+      </button>
+      {open && (
+        <div className="mem-pop" role="dialog" aria-label="Memory by project">
+          <div className="mem-head">
+            <span>Memory</span>
+            <span className="faint">{mb(total + hub)} in all</span>
+          </div>
+          {running.map((p) => {
+            const d = p.running!.memoryDetail;
+            const t = p.running!.memory ?? 0;
+            return (
+              <div key={p.path} className="mem-row">
+                <div className="mem-line">
+                  <span className="mem-name">{p.name}</span>
+                  <span className="mem-mb">{mb(t)}</span>
+                  <button className="mem-close" onClick={() => onClose(p)} title="Close this project: stops its app and frees its memory">
+                    Close
+                  </button>
+                </div>
+                <div className="mem-bar" style={{ width: `${Math.max(8, (t / max) * 100)}%` }}>
+                  {d ? (
+                    <>
+                      <span className="mem-seg app" style={{ flex: d.app }} />
+                      <span className="mem-seg tc" style={{ flex: d.truecanvas }} />
+                      {d.browser > 0 && <span className="mem-seg browser" style={{ flex: d.browser }} />}
+                    </>
+                  ) : (
+                    <span className="mem-seg tc" style={{ flex: 1 }} />
+                  )}
+                </div>
+                {d && (
+                  <div className="mem-parts faint">
+                    <span>
+                      <i className="mem-dot app" /> App {mb(d.app)}
+                    </span>
+                    <span>
+                      <i className="mem-dot tc" /> Truecanvas {mb(d.truecanvas)}
+                    </span>
+                    {d.browser > 0 && (
+                      <span>
+                        <i className="mem-dot browser" /> Screenshots {mb(d.browser)}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {hub > 0 && (
+            <div className="mem-row mem-hub">
+              <div className="mem-line">
+                <span className="mem-name">This window</span>
+                <span className="mem-mb">{mb(hub)}</span>
+              </div>
+            </div>
+          )}
+          <p className="mem-note faint">The app is your dev server (next dev or vite), usually the biggest part. Projects you leave alone for 30 minutes stop their app on their own.</p>
+        </div>
+      )}
+    </div>
   );
 }
