@@ -20,6 +20,7 @@ import { ACCESS_MODES, connectReviewSite, deleteShare, parseEmails, reviewSite, 
 import { toolEnv } from "../core/pm.js";
 import { addDevArgs, connectAgents, detectPm, execInherit, hasAgentConfig, installedIn, packageDir, packageSpec, packageVersion, readPackage, runScript } from "./setup.js";
 import { appRun } from "../server/app-run.js";
+import { newShot, normalizeShot, type Shot } from "../core/shot-model.js";
 
 const HELP = `truecanvas: design with your real React components
 
@@ -45,6 +46,10 @@ Usage
                        --session: a live session (until Ctrl+C): the link shows the canvas live from your app,
                          with everyone's cursors and comments in real time
   truecanvas share setup     Connect your studio's review site (URL + REVIEW_TOKEN)
+  truecanvas shot [canvas]   A frame on a shader or gradient, framed for X and LinkedIn, as a PNG (needs truecanvas running).
+                       Uses the frame's saved shot (made in the editor's Shot dialog), else a new one:
+                       --frame <name>, --id <shot>, --format 4:5|1:1|16:9|9:16|3:2, --out <file.png>,
+                       --all: export every saved shot of the canvas again (after design changes)
   truecanvas mcp       stdio MCP server for agents without HTTP support
 
 Options
@@ -153,6 +158,11 @@ async function main() {
       access: { type: "string" },
       "link-only": { type: "boolean" },
       session: { type: "boolean" },
+      frame: { type: "string" },
+      id: { type: "string" },
+      format: { type: "string" },
+      out: { type: "string" },
+      all: { type: "boolean" },
     },
   });
   const cli = fileURLToPath(import.meta.url);
@@ -269,6 +279,8 @@ async function main() {
     console.log(`\n  Next: ${c.accent("npm run canvas")} ${c.dim("(starts your app and the editor)")}\n`);
     return;
   }
+  if (command === "shot") return shotCommand(config.port, positionals[1], values);
+
   if (command === "share") {
     // setup: connect the studio's review site (URL + token from its environment variables)
     if (positionals[1] === "setup") {
@@ -682,3 +694,51 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+/** `truecanvas shot`: exports shots through the running Truecanvas (it owns the browser and the compositor). */
+async function shotCommand(port: number, canvasArg: string | undefined, values: { frame?: string; id?: string; format?: string; out?: string; all?: boolean }) {
+  const base = `http://localhost:${port}`;
+  const post = (route: string, body: unknown) => fetch(`${base}${route}`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify(body) });
+  const state = await fetch(`${base}/api/state`).then((r) => (r.ok ? (r.json() as Promise<{ canvases: string[] }>) : null)).catch(() => null);
+  if (!state) {
+    console.error(`  ${c.red("✗")} Truecanvas isn't running here. Start it first: ${c.accent("npx truecanvas dev")}`);
+    process.exit(1);
+  }
+  const canvas = canvasArg ?? (state.canvases.length === 1 ? state.canvases[0] : null);
+  if (!canvas) {
+    console.error(`  ${c.red("✗")} Name the page: truecanvas shot <page> (${state.canvases.join(", ")})`);
+    process.exit(1);
+  }
+  const { shots } = (await (await fetch(`${base}/api/shots?canvas=${encodeURIComponent(canvas)}`)).json()) as { shots: Shot[] };
+  let todo: Shot[];
+  if (values.all) todo = shots;
+  else {
+    const found = values.id ? shots.find((s) => s.id === values.id) : shots.find((s) => !values.frame || s.frame === values.frame);
+    if (!found && !values.frame) {
+      console.error(`  ${c.red("✗")} ${canvas} has no shots yet. Make one in the editor (select a frame, Make a shot), or pass ${c.accent("--frame <name>")}.`);
+      process.exit(1);
+    }
+    let shot = found ?? newShot(values.frame!);
+    if (values.format) shot = normalizeShot({ ...shot, format: values.format });
+    // a new or changed shot is saved, so it can be exported again later
+    if (!found || values.format) shot = ((await (await post("/api/shots", { canvas, shot })).json()) as { shot: Shot }).shot;
+    todo = [shot];
+  }
+  if (!todo.length) {
+    console.log(`  ${canvas} has no saved shots.`);
+    return;
+  }
+  for (const shot of todo) {
+    const res = await post("/api/shot/export", { canvas, shot });
+    if (!res.ok) {
+      console.error(`  ${c.red("✗")} ${shot.frame}: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText}`);
+      process.exitCode = 1;
+      continue;
+    }
+    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const out = path.resolve(values.out && todo.length === 1 ? values.out : path.join("shots", `${slug(canvas)}-${slug(shot.frame)}-${shot.format.replace(":", "x")}${todo.length > 1 ? `-${shot.id}` : ""}.png`));
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+    console.log(`  ${c.green("✓")} ${shot.frame} ${c.dim(`(${shot.format}, ${res.headers.get("x-shot-size") ?? ""})`)} ${path.relative(process.cwd(), out)}`);
+  }
+}

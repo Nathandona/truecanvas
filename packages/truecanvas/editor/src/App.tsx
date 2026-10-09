@@ -15,6 +15,7 @@ import { ReviewSheet } from "./components/GitPanel";
 import { ComponentDialog } from "./components/ComponentDialog";
 import { LibrariesDialog } from "./components/LibrariesDialog";
 import { ShareDialog } from "./components/ShareDialog";
+import { ShotDialog } from "./components/ShotDialog";
 import { fromServer } from "./lib/scope";
 
 let flashSeq = 0;
@@ -169,6 +170,7 @@ export function App() {
         <ComponentDialog />
         <LibrariesDialog />
         <ShareDialog />
+        <ShotDialog />
         <Toolbar />
         {appStatus === "starting" && (
           <div className="banner" role="status">

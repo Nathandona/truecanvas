@@ -27,6 +27,7 @@ import { shadcnStatus } from "../core/shadcn.js";
 import { createSnapshot, sharesDir } from "../share/snapshot.js";
 import { linkInfo, parseEmails, publishSnapshot, reviewSite, siteFeatures, type Access, type LiveSite } from "../share/publish.js";
 import { canExport, exportSite } from "../share/export.js";
+import { ShotService } from "./shot.js";
 import { CommentSync } from "../share/sync.js";
 import { Sessions } from "../share/session.js";
 import { assertCanvasName } from "../core/scaffold.js";
@@ -56,6 +57,8 @@ export async function startServer(ws: Workspace) {
   const shots = new Screenshotter(config.appUrl);
   let prCache: { key: string; at: number; pr: PullRequest | null } | null = null;
   const thumbs = new Thumbnails(ws, shots);
+  // shots: frames staged for social posts (the editor's Shot dialog, the CLI, MCP)
+  const shotService = new ShotService(ws, shots, () => origin);
   // client comments on share links, both ways
   // the Truecanvas window (hub) that started this project hears about them, to notify the studio
   const hub = process.env.TRUECANVAS_HUB_URL;
@@ -141,7 +144,7 @@ export async function startServer(ws: Workspace) {
           ws.dropAgent(sid);
         }
       };
-      const server = createMcpServer(ws, shots, () => sid, sessions);
+      const server = createMcpServer(ws, shots, () => sid, sessions, shotService);
       await server.connect(t);
       transport = t;
     }
@@ -461,6 +464,46 @@ export async function startServer(ws: Workspace) {
         assertCanvasName(canvas);
         const site = reviewSite();
         return json(res, 200, { link: site ? await linkInfo(site, path.basename(config.root), canvas).catch(() => null) : null });
+      }
+      // ---------- shots ----------
+      case "GET /api/shots": {
+        const canvas = url.searchParams.get("canvas") ?? "";
+        assertCanvasName(canvas);
+        return json(res, 200, { shots: ws.shots.list(canvas) });
+      }
+      case "POST /api/shots": {
+        const { canvas, shot } = (await readJson(req)) as { canvas: string; shot: unknown };
+        assertCanvasName(canvas);
+        return json(res, 200, { shot: ws.shots.save(canvas, shot) });
+      }
+      case "POST /api/shots/delete": {
+        const { canvas, id } = (await readJson(req)) as { canvas: string; id: string };
+        assertCanvasName(canvas);
+        return json(res, 200, { removed: ws.shots.remove(canvas, id) });
+      }
+      case "POST /api/shot/capture": {
+        // the frame as the app renders it, for the editor's live preview (cached)
+        const { canvas, shot, fresh } = (await readJson(req)) as { canvas: string; shot: unknown; fresh?: boolean };
+        assertCanvasName(canvas);
+        const { key, capture } = await shotService.capture(canvas, shot, !!fresh);
+        return json(res, 200, { image: { src: `/api/shot/frame?key=${key}&t=${capture.at}`, width: capture.width, height: capture.height } });
+      }
+      case "GET /api/shot/frame": {
+        const png = shotService.image(url.searchParams.get("key") ?? "");
+        if (!png) return json(res, 404, { error: "Not captured" });
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=600" });
+        return res.end(png);
+      }
+      case "GET /api/shot/job": {
+        const job = shotService.job(url.searchParams.get("id") ?? "");
+        return job ? json(res, 200, job) : json(res, 404, { error: "No such shot" });
+      }
+      case "POST /api/shot/export": {
+        const { canvas, shot } = (await readJson(req)) as { canvas: string; shot: unknown };
+        assertCanvasName(canvas);
+        const out = await shotService.export(canvas, shot);
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store", "x-shot-size": `${out.width}x${out.height}` });
+        return res.end(out.png);
       }
       case "GET /api/share/progress":
         return json(res, 200, { step: shareStep });

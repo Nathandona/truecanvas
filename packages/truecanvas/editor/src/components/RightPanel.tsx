@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Bot, Code2, Component, CopyPlus, ExternalLink, FileCode2, Frame as FrameIcon, LayoutList, Monitor, Moon, RotateCcw, Sun, Trash2, RectangleVertical, RefreshCcw, Smartphone, Tablet, Laptop, Waves } from "lucide-react";
+import { ArrowRight, Bot, Code2, Component, CopyPlus, ExternalLink, FileCode2, Frame as FrameIcon, LayoutList, Monitor, Moon, RotateCcw, Sun, Trash2, RectangleVertical, RefreshCcw, Smartphone, Tablet, Laptop, Waves, ImagePlus } from "lucide-react";
 import { useStore, layerName, persist, type ThemeMode } from "../lib/store";
 import { api, DEVICES, type CanvasFrame, type CanvasNode, type ComponentSpec, type Literal, type PropSpec, type PropValue } from "../lib/api";
 import { applyUiTheme, copySelectionCode, deleteSelection, duplicateSelection, openInEditor, wrapSelection, zoomToSelection } from "../lib/actions";
@@ -13,6 +13,7 @@ import { StyleSections } from "./StyleSections";
 import { CommentsTab } from "./Comments";
 import { AgentTab } from "./AgentTab";
 import { openShare } from "./ShareDialog";
+import { openShot } from "./ShotDialog";
 import { SessionButton } from "./LiveSession";
 
 export function RightPanel() {
@@ -306,6 +307,12 @@ function FrameInspector({ frame }: { frame: CanvasFrame }) {
         <p className="faint" style={{ margin: "8px 0 0" }}>
           {frame.theme ? `Always rendered ${frame.theme}.` : "Follows the canvas theme."}
         </p>
+      </Section>
+      <Section title={<span className="node-head"><ImagePlus size={14} className="faint" /> Shot</span>}>
+        <p className="faint" style={{ margin: "0 0 8px" }}>This frame on a shader or gradient, framed for X and LinkedIn.</p>
+        <button className="btn outline" style={{ width: "100%" }} onClick={() => openShot(frame.frameName)}>
+          <ImagePlus size={14} /> Make a shot
+        </button>
       </Section>
       <BackgroundSection parentId={frame.id} />
       <CodeSection id={frame.id} />

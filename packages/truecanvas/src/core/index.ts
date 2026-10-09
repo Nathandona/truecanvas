@@ -21,3 +21,6 @@ export { shadcnStatus, shadcnRegistry, shadcnAdd, shadcnInit } from "./shadcn.js
 export type { ShadcnStatus } from "./shadcn.js";
 export { addVitePlugin, configStatus, initProject, wrapConfigExport } from "./init.js";
 export { syncRoute, viteStylesheets } from "./scaffold.js";
+export { Shots } from "./shots.js";
+export { SHOT_FORMATS, SHOT_SHADERS, newShot, normalizeShot, shotLayout, captureHeight } from "./shot-model.js";
+export type { Shot, ShotFormat, ShotBackdrop, ShotFraming, ShotCrop } from "./shot-model.js";

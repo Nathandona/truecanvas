@@ -15,6 +15,7 @@ import { componentFile, componentName, importsFor, newComponentPath, starterJsx 
 import { DEVICES, findDevice } from "./devices.js";
 import { listRoutes, routeFrame } from "./routes.js";
 import { Comments, type CommentAuthor } from "./comments.js";
+import { Shots } from "./shots.js";
 import { Git } from "./git.js";
 import { CANVAS_SUFFIX, STARTER_CANVAS, canvasFiles, canvasNameOf, canvasPath, syncRoute } from "./scaffold.js";
 import type { CanvasDoc, CanvasNode, ComponentSpec } from "./types.js";
@@ -126,11 +127,13 @@ export class Workspace {
   agents = new Map<string, AgentInfo>();
 
   readonly comments: Comments;
+  readonly shots: Shots;
   readonly git: Git;
 
   constructor(readonly config: TruecanvasConfig) {
     this.catalog = new Catalog(config.root, config.components, config.libraries);
     this.comments = new Comments(config);
+    this.shots = new Shots(config);
     this.git = new Git(config.root);
     for (const c of this.canvases()) this.sources.set(c, fs.readFileSync(this.file(c), "utf8"));
   }

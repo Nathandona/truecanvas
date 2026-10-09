@@ -1,3 +1,4 @@
+import type { Shot } from "../../../src/core/shot-model";
 import type { CanvasDoc, ComponentSpec } from "../../../src/core/types";
 
 export type { CanvasDoc, CanvasNode, CanvasFrame, ComponentSpec, PropSpec, PropValue, Preset } from "../../../src/core/types";
@@ -178,6 +179,15 @@ export const api = {
   canvas: (name: string) => call<{ doc: CanvasDoc; history: { undo: number; redo: number } }>(`/api/canvas?name=${encodeURIComponent(name)}`),
   components: () => call<{ components: ComponentSpec[] }>("/api/components"),
   libraries: () => call<LibraryState>("/api/libraries"),
+  shots: (canvas: string) => call<{ shots: Shot[] }>(`/api/shots?canvas=${encodeURIComponent(canvas)}`),
+  saveShot: (canvas: string, shot: Shot) => call<{ shot: Shot }>("/api/shots", { canvas, shot }),
+  deleteShot: (canvas: string, id: string) => call<{ removed: boolean }>("/api/shots/delete", { canvas, id }),
+  captureShot: (canvas: string, shot: Shot, fresh = false) => call<{ image: { src: string; width: number; height: number } }>("/api/shot/capture", { canvas, shot, fresh }),
+  exportShot: async (canvas: string, shot: Shot): Promise<Blob> => {
+    const res = await fetch("/api/shot/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ canvas, shot }) });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Export failed (${res.status})`);
+    return res.blob();
+  },
   shareStatus: () => call<{ site: string | null; features: string[]; realSite?: boolean }>("/api/share/status"),
   shareLink: (canvas: string) => call<{ link: LinkInfo | null }>(`/api/share/link?canvas=${encodeURIComponent(canvas)}`),
   shareProgress: () => call<{ step: string | null }>("/api/share/progress"),

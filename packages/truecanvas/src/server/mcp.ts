@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -13,6 +14,9 @@ import type { Screenshotter } from "./screenshot.js";
 import { createSnapshot } from "../share/snapshot.js";
 import { parseEmails, publishSnapshot, reviewSite, siteFeatures, type LiveSite } from "../share/publish.js";
 import { canExport, exportSite } from "../share/export.js";
+import type { ShotService } from "./shot.js";
+import { newShot, normalizeShot, SHOT_FORMATS, SHOT_SHADERS, type Shot } from "../core/shot-model.js";
+import { readTokenData } from "../core/tokens.js";
 import type { Sessions } from "../share/session.js";
 
 export const INSTRUCTIONS = `Truecanvas is a design canvas whose layers are the project's real React components.
@@ -26,12 +30,14 @@ Workflow:
    For mobile screens create frames with a device (e.g. device="iphone-16"): the right size, plus touch + pixel-ratio emulation in screenshots.
    Icons and shadcn/ui: list_libraries shows what's installed. install_library adds an icon set (lucide, tabler, phosphor, heroicons, radix); search_icons finds names and insert_icon places one with its import. add_shadcn_components copies shadcn/ui components into the project (setting shadcn up if needed); they then appear in list_components like any project component.
 4. screenshot_frame to check the result visually. get_selection tells you what the user has selected in the editor ("make this denser" = the selection).
-5. focus to show the user what you changed. Everything is undoable by the user.`;
+5. focus to show the user what you changed. Everything is undoable by the user.
+
+Posting a design (X, LinkedIn): make_shot stages a frame on a shader or gradient backdrop at a social format and exports a PNG to shots/. Look at the preview it returns and adjust (colors, framing, crop) until it looks right.`;
 
 const literal = z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.union([z.string(), z.number(), z.boolean()]))]);
 const deviceIds = DEVICES.map((d) => d.id) as [string, ...string[]];
 
-export function createMcpServer(ws: Workspace, shots: Screenshotter, session: () => string, sessions?: Sessions) {
+export function createMcpServer(ws: Workspace, shots: Screenshotter, session: () => string, sessions?: Sessions, shotService?: ShotService) {
   const server = new McpServer({ name: "truecanvas", version: "0.1.0" }, { instructions: INSTRUCTIONS });
 
   const actor = (): Actor => {
@@ -741,6 +747,101 @@ export function createMcpServer(ws: Workspace, shots: Screenshotter, session: ()
             .filter(Boolean)
             .join("\n"),
         );
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "make_shot",
+    {
+      title: "Make a shot",
+      description:
+        "Stage a frame for social posts (X, LinkedIn): the frame as the app renders it, on a backdrop (a Paper shader, a gradient or a color), with framing (margin, corners, shadow, tilt, browser or phone chrome) at a social format, exported as a PNG in the project's shots/ folder. Settings are saved in <page>.shots.json, so the user can open the shot in the editor's Shot dialog and tweak it, and it can be exported again after design changes. Changes apply on top of the frame's latest shot (or the one given by id); pass new: true for another shot of the same frame. Returns a small preview to check the result.",
+      inputSchema: {
+        ...canvasArg,
+        frame: z.string().describe("The frame's name."),
+        id: z.string().optional().describe("A saved shot to change (list_shots shows them)."),
+        new: z.boolean().optional().describe("Start a new shot of this frame instead of changing its latest one."),
+        format: z.enum(Object.keys(SHOT_FORMATS) as [string, ...string[]]).optional().describe("4:5 (LinkedIn and X feed, the default), 1:1, 16:9 (X, slides), 9:16 (stories), 3:2."),
+        backdrop: z
+          .object({
+            type: z.enum(["shader", "gradient", "solid"]).optional(),
+            shader: z.enum(SHOT_SHADERS).optional().describe("MeshGradient (soft blobs), GrainGradient (grainy), StaticMeshGradient (silky), StaticRadialGradient (a glow), Warp (bold swirls)."),
+            colors: z.array(z.string()).optional().describe("2 to 5 CSS colors, the first is the base. The brand's colors flatter its design; dark ones make a light design stand out."),
+            angle: z.number().optional().describe("Gradient angle in degrees."),
+            grain: z.number().optional().describe("Film grain, 0 to 1 (0.25 is subtle)."),
+            shuffle: z.boolean().optional().describe("Another variation of the shader."),
+          })
+          .optional(),
+        framing: z
+          .object({
+            padding: z.number().optional().describe("Margin around the design, 0 to 0.3 of the format's shorter side."),
+            radius: z.number().optional(),
+            shadow: z.enum(["none", "soft", "strong"]).optional(),
+            tilt: z.number().optional().describe("3D tilt, -20 to 20 degrees."),
+            chrome: z.enum(["none", "browser", "phone"]).optional(),
+            position: z.enum(["center", "bleed"]).optional().describe("bleed: the design rises from the bottom edge and is cut off by it."),
+          })
+          .optional(),
+        crop: z.object({ mode: z.enum(["top", "full"]).optional(), height: z.number().optional().describe("With top: how many px of the frame, from its top.") }).optional(),
+      },
+    },
+    async ({ canvas, frame, id, new: fresh, format, backdrop, framing, crop }) => {
+      try {
+        if (!shotService) throw new Error("Shots are made by the Truecanvas server (npx truecanvas).");
+        const c = resolveCanvas(canvas);
+        if (!ws.doc(c).frames.some((f) => f.frameName === frame)) throw new Error(`No frame named "${frame}" in ${c}.`);
+        presence(c, "looking", `Making a shot of ${frame}`);
+        const saved = ws.shots.list(c);
+        const brand = readTokenData(ws.config.root).colors.map((x) => x.light);
+        const base: Shot = (!fresh && (id ? saved.find((s) => s.id === id) : saved.find((s) => s.frame === frame))) || newShot(frame, brand.filter((x) => /^#[0-9a-f]{6}$/i.test(x)).slice(0, 4));
+        const { shuffle, ...back } = backdrop ?? {};
+        const shot = ws.shots.save(
+          c,
+          normalizeShot({
+            ...base,
+            frame,
+            ...(format ? { format } : {}),
+            backdrop: { ...base.backdrop, ...back, ...(shuffle ? { seed: Math.floor(Math.random() * 100_000) } : {}) },
+            framing: { ...base.framing, ...framing },
+            crop: { ...base.crop, ...crop },
+          }),
+        );
+        const out = await shotService.export(c, shot);
+        const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        const rel = path.join("shots", `${slug(c)}-${slug(frame)}-${shot.format.replace(":", "x")}.png`);
+        fs.mkdirSync(path.join(ws.config.root, "shots"), { recursive: true });
+        fs.writeFileSync(path.join(ws.config.root, rel), out.png);
+        const preview = await shotService.preview(c, shot);
+        return {
+          content: [
+            { type: "image" as const, data: preview.toString("base64"), mimeType: "image/png" },
+            {
+              type: "text" as const,
+              text: `✓ Shot ${shot.id} of "${frame}" (${shot.format}, ${shot.backdrop.type}${shot.backdrop.type === "shader" ? ` ${shot.backdrop.shader}` : ""}): ${rel}, ${out.width}×${out.height}. Saved in ${c}.shots.json: the user can open it from the frame's Make a shot in the editor.`,
+            },
+          ],
+        };
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_shots",
+    {
+      title: "List shots",
+      description: "The saved shots of a canvas (made in the editor's Shot dialog or with make_shot): frame, format, backdrop, framing.",
+      inputSchema: { ...canvasArg },
+    },
+    async ({ canvas }) => {
+      try {
+        const c = resolveCanvas(canvas);
+        const list = ws.shots.list(c);
+        return text(list.length ? JSON.stringify(list, null, 2) : `${c} has no shots yet. make_shot creates one.`);
       } catch (e) {
         return fail(e);
       }

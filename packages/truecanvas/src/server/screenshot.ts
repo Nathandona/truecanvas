@@ -65,7 +65,7 @@ export class Screenshotter {
       const { chromium } = await import("playwright-core");
       const executablePath = this.executable();
       if (!executablePath) throw new Error("No Chromium found for screenshots. Install Chrome/Chromium or set TRUECANVAS_CHROME.");
-      const launching = chromium.launch({ executablePath, headless: true, args: ["--disable-gpu", "--disable-dev-shm-usage"] });
+      const launching = chromium.launch({ executablePath, headless: true, args: ["--disable-gpu", "--disable-dev-shm-usage", "--enable-unsafe-swiftshader"] });
       this.browser = launching;
       launching.then(
         // a crashed browser is forgotten, so the next screenshot starts a fresh one
@@ -105,6 +105,24 @@ export class Screenshotter {
     const b = this.browser;
     this.browser = null;
     if (b) await (await b).close().catch(() => {});
+  }
+
+  /**
+   * A page that says when it's ready (`window.__shotReady`), at an exact
+   * size: shots, rendered by Truecanvas's own compositor. WebGL draws in
+   * software (SwiftShader), so it works without a GPU.
+   */
+  async render(url: string, viewport: { width: number; height: number }, scale: number): Promise<Buffer> {
+    return this.withContext({ viewport, deviceScaleFactor: scale, colorScheme: "light" }, async (ctx) => {
+      const page = await ctx.newPage();
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      const state = await page
+        .waitForFunction(() => (window as unknown as { __shotReady?: boolean; __shotError?: string }).__shotReady || (window as unknown as { __shotError?: string }).__shotError, undefined, { timeout: 30_000 })
+        .then((h) => h.jsonValue());
+      if (typeof state === "string") throw new Error(`The shot couldn't render: ${state}`);
+      await page.evaluate(() => document.fonts.ready);
+      return await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: viewport.width, height: viewport.height } });
+    });
   }
 
   /** Screenshot of the [data-tc-frame] element of a page (Assets thumbnails). */

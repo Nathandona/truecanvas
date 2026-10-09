@@ -18,10 +18,11 @@ Truecanvas renders your actual `.tsx` components on an infinite canvas and write
 
 - **Real components.** Layers are instances of your components, with a props panel generated from their TypeScript types.
 - **Code is the document.** A canvas is a `.canvas.tsx` file. Edits are minimal patches that keep your formatting, so diffs stay reviewable.
-- **Agent-first.** 45 MCP tools to read the tree, insert JSX, set props and classes, create frames and variants, and take screenshots.
+- **Agent-first.** 49 MCP tools to read the tree, insert JSX, set props and classes, create frames and variants, take screenshots and make images for social posts.
 - **Design on real pages.** Link any Next.js page as a frame: editing its layers edits `page.tsx` and its layouts.
 - **Components and libraries.** Turn a selection into a component, edit main components, install icon sets (Lucide, Tabler, Phosphor, Heroicons, Radix) and add shadcn/ui components.
 - **Share with clients.** One click freezes a page into a private link on your own domain: clients look and comment in their browser, nothing to install, and their comments land on your canvas for you or your agent to answer.
+- **Shots for X and LinkedIn.** Stage a frame on a Paper shader or a gradient, with a browser or phone frame, a tilt and a soft shadow, at a social format, and export a sharp PNG. Settings are saved, so the image can be made again after the design changes.
 - **Git built in.** Per-frame change summaries, branches, commits, pull requests with before/after images, visual compare and comments that travel with branches.
 - **Motion, devices, themes.** Scroll reveals and text animations, iPhone/Pixel/iPad presets with device chrome, and per-frame light and dark themes.
 - **Lightweight.** Frames render through your existing dev server. Headless Chromium only starts when an agent asks for a screenshot.
@@ -100,7 +101,7 @@ export default function ChatCanvas() {
 | Edit | `insert_jsx` `replace_node` `set_props` `set_text` `set_class_name` `move_node` `duplicate_nodes` `delete_nodes` `wrap_nodes` `undo` `redo` |
 | Frames and pages | `create_frame` `update_frame` `create_variants_frame` `create_canvas` `rename_canvas` `delete_canvas` `import_page` `explore_copy` `apply_to_page` |
 | Components and libraries | `create_component` `open_component` `list_libraries` `install_library` `search_icons` `insert_icon` `add_shadcn_components` |
-| Look and show | `share_canvas` `screenshot_frame` `focus` `play_frame` `add_animation` `remove_animation` `add_background` `apply_preset` `reply_comment` `resolve_comment` |
+| Look and show | `share_canvas` `make_shot` `list_shots` `screenshot_frame` `focus` `play_frame` `add_animation` `remove_animation` `add_background` `apply_preset` `reply_comment` `resolve_comment` |
 
 Node ids are the JSX tag's `line:col` and change after edits; every write returns the fresh ids. Catalog components are imported automatically.
 
@@ -130,6 +131,24 @@ You deploy the review site once, on your own domain:
 Then connect Truecanvas: `npx truecanvas share setup https://review.your-studio.com`.
 
 Without a review site, Share still makes a local preview of what clients would see.
+
+## Shots for social posts
+
+Select a frame, then **Make a shot** in its panel. The frame, as your app renders it, is staged on a backdrop for posting:
+
+- **Backdrop**: a Paper shader (Mesh, Grain, Silk, Glow, Warp), a gradient or a color, with film grain. Palettes come from your design (colors sampled from the frame), your Tailwind theme, or a few hand-picked ones; Shuffle tries another variation.
+- **Framing**: margin, corners, shadow, 3D tilt, a browser or phone frame, centered or rising from the bottom edge.
+- **Crop**: the top of the frame (most posts) or all of it. **Formats**: 4:5 (LinkedIn and X feed), 1:1, 16:9, 9:16, 3:2, exported at 2x.
+
+**Copy image** puts it on the clipboard to paste into a post; **Export PNG** downloads it. Shots are saved in `canvas/<page>.shots.json`, so they're versioned with the repo and can be exported again after design changes:
+
+```bash
+npx truecanvas shot home                         # the home page's latest shot, to shots/
+npx truecanvas shot home --frame Pricing --format 1:1
+npx truecanvas shot home --all                   # every saved shot again
+```
+
+Agents use `make_shot` ("make a LinkedIn image of the hero on a navy gradient"): it saves the shot, exports it to `shots/` and looks at a preview to adjust.
 
 ## Configuration
 

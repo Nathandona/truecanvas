@@ -324,6 +324,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
+      '@paper-design/shaders-react':
+        specifier: 0.0.81
+        version: 0.0.81(@types/react@19.3.0)(react@19.3.0)
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.1

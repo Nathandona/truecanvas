@@ -16,6 +16,7 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         hub: fileURLToPath(new URL("./hub.html", import.meta.url)),
+        shot: fileURLToPath(new URL("./shot.html", import.meta.url)),
       },
     },
   },
